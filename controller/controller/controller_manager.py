@@ -99,8 +99,6 @@ class Controller(Node):
         self.waypoint_pub = self.create_publisher(MarkerArray, 'my_waypoints', 10)
         self.l1_pub = self.create_publisher(Point, 'l1_distance', 10)
         self.gap_data = self.create_publisher(PidData, '/trailing/gap_data', 10)
-        # Publisher for steering and speed command
-        self.publish_topic = '/vesc/high_level/ackermann_cmd_mux/input/nav_1'
 
         self.track_length = None
         self.opponent = None
@@ -133,7 +131,6 @@ class Controller(Node):
             return
 
         # Subscribers
-        #self.create_subscription(Config, '/l1_param_tuner/parameter_updates',self.l1_params_cb) #l1 param tuning/updating
         self.create_subscription(String,'/state',  self.state_cb, 10)
         self.create_subscription(WpntArray,'/global_waypoints',  self.track_length_cb, 10)
         self.create_subscription(ObstacleArray,'/perception/obstacles',  self.obstacle_cb, 10)
@@ -489,9 +486,6 @@ class Controller(Node):
         vs = data.twist.twist.linear.x
         vd = data.twist.twist.linear.y
         self.position_in_map_frenet = np.array([s,d,vs,vd])
-
-    def l1_params_cb(self):
-        pass
 
     def state_cb(self, data):
         self.state = data.data

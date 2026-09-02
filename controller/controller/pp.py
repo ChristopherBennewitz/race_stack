@@ -332,32 +332,6 @@ class PP_Controller:
         global_speed *= (1 - lat_e_coeff + lat_e_coeff*np.exp(-lat_e_norm*curv))
         return global_speed
     
-    def speed_adjust_heading(self, speed_command):
-        """
-        Reduce speed from the global_speed based on the heading error.
-        If the difference between the map heading and the actual heading
-        is larger than 20 degrees, the speed gets scaled down linearly up to 0.5x
-        
-        Returns:
-            global_speed: the speed we want to follow
-        """
-
-        heading = self.position_in_map[0,2]
-        map_heading = self.waypoint_array_in_map[self.idx_nearest_waypoint, 6]
-        if abs(heading - map_heading) > np.pi: # resolves wrapping issues
-            heading_error = 2*np.pi - abs(heading- map_heading)
-        else:
-            heading_error = abs(heading - map_heading)
-
-        if heading_error < np.pi/9: # 20 degrees error is okay
-            return speed_command
-        elif heading_error < np.pi/2: 
-            scaler = 1 - 0.5* heading_error/(np.pi/2) # scale linearly to 0.5x
-        else:
-            scaler = 0.5
-        self.logger_info(f"[MAP Controller] heading error decreasing velocity by {scaler}")
-        return speed_command * scaler
-        
     def nearest_waypoint(self, position, waypoints):
         """
         Calculates index of nearest waypoint to the car
@@ -382,4 +356,4 @@ class PP_Controller:
         waypoints_distance = 0.1
         d_index= int(d_distance/waypoints_distance + 0.5)
 
-        return np.array(waypoints[min(len(waypoints) -1, idx_waypoint_behind_car + d_index)]) 
+        return np.array(waypoints[min(len(waypoints) -1, idx_waypoint_behind_car + d_index)])
