@@ -184,6 +184,12 @@ class Controller(Node):
                        {'name' : 'downscale_factor',
                         'default' : self.l1_params["downscale_factor"],
                         'descriptor' : ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE, floating_point_range=[FloatingPointRange(from_value=0.0, to_value=0.5, step=0.01)])},
+                       {'name' : 'steer_boost_per_mps',
+                        'default' : self.l1_params["steer_boost_per_mps"],
+                        'descriptor' : ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE, floating_point_range=[FloatingPointRange(from_value=0.0, to_value=0.5, step=0.01)])},
+                       {'name' : 'steer_boost_max',
+                        'default' : self.l1_params["steer_boost_max"],
+                        'descriptor' : ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE, floating_point_range=[FloatingPointRange(from_value=1.0, to_value=2.0, step=0.01)])},
                        {'name' : 'speed_lookahead_for_steer',
                         'default' : self.l1_params["speed_lookahead_for_steer"],
                         'descriptor' : ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE, floating_point_range=[FloatingPointRange(from_value=0.0, to_value=0.2, step=0.01)])},
@@ -264,6 +270,8 @@ class Controller(Node):
                 self.l1_params["start_scale_speed"],
                 self.l1_params["end_scale_speed"],
                 self.l1_params["downscale_factor"],
+                self.l1_params["steer_boost_per_mps"],
+                self.l1_params["steer_boost_max"],
                 self.l1_params["speed_lookahead_for_steer"],
                 self.l1_params["prioritize_dyn"],
                 self.l1_params["trailing_gap"],
@@ -311,6 +319,8 @@ class Controller(Node):
                 self.l1_params["start_scale_speed"],
                 self.l1_params["end_scale_speed"],
                 self.l1_params["downscale_factor"],
+                self.l1_params["steer_boost_per_mps"],
+                self.l1_params["steer_boost_max"],
                 self.l1_params["speed_lookahead_for_steer"],
                 self.l1_params["prioritize_dyn"],
                 self.l1_params["trailing_gap"],
@@ -386,6 +396,8 @@ class Controller(Node):
             self.map_controller.start_scale_speed = self.get_parameter('start_scale_speed').value
             self.map_controller.end_scale_speed = self.get_parameter('end_scale_speed').value
             self.map_controller.downscale_factor = self.get_parameter('downscale_factor').value
+            self.map_controller.steer_boost_per_mps = self.get_parameter('steer_boost_per_mps').value
+            self.map_controller.steer_boost_max = self.get_parameter('steer_boost_max').value
             self.map_controller.speed_lookahead_for_steer = self.get_parameter('speed_lookahead_for_steer').value
             self.map_controller.prioritize_dyn = self.get_parameter('prioritize_dyn').value
             self.map_controller.trailing_gap = self.get_parameter('trailing_gap').value
@@ -405,6 +417,8 @@ class Controller(Node):
             self.pp_controller.start_scale_speed = self.get_parameter('start_scale_speed').value
             self.pp_controller.end_scale_speed = self.get_parameter('end_scale_speed').value
             self.pp_controller.downscale_factor = self.get_parameter('downscale_factor').value
+            self.pp_controller.steer_boost_per_mps = self.get_parameter('steer_boost_per_mps').value
+            self.pp_controller.steer_boost_max = self.get_parameter('steer_boost_max').value
             self.pp_controller.speed_lookahead_for_steer = self.get_parameter('speed_lookahead_for_steer').value
             self.pp_controller.prioritize_dyn = self.get_parameter('prioritize_dyn').value
             self.pp_controller.trailing_gap = self.get_parameter('trailing_gap').value

@@ -73,6 +73,10 @@ At high speeds the steering is downscaled by a factor to reduce tire slipping
 - `end_scale_speed`: end of downscaling speed range [0, ∞, 8]
 - `downscale_factor`: percent of steer downscaling [0, 100, 20]
 
+- `steer_boost_per_mps`: steering multiplier added per m/s [0, 0.5, 0.1]
+
+- `steer_boost_max`: maximum speed-dependent steering multiplier [1, 2, 1.25]
+
 ![visualisation of speed scaling](misc/speed_scaling.png)
 - `acc_scaler_for_steer`: when accelerating stronger than 1m/s^2 the steering is increased by this factor [1, ∞, 1.2]
 - `dec_scaler_for_steer`: when accelerating stronger than -1m/s^2 the steering is reduced by this factor [0, 1, 0.9]
@@ -147,6 +151,10 @@ At high speeds the steering is downscaled by a factor to reduce tire slipping
 - `end_scale_speed`: end of downscaling speed range [0, ∞, 8]
 
 - `downscale_factor`: percent of steer downscaling [0, 100, 20]
+
+- `steer_boost_per_mps`: steering multiplier added per m/s [0, 0.5, 0.1]
+
+- `steer_boost_max`: maximum speed-dependent steering multiplier [1, 2, 1.25]
 
 ![visualisation of speed scaling](misc/speed_scaling.png)
 

@@ -3,6 +3,8 @@
 import logging
 import numpy as np
 
+from controller.steering_scaling import scale_steering
+
 class PP_Controller:
     """This class implements a Pure Pursuit controller for autonomous driving.
     Input and output topics are managed by the controller manager
@@ -20,6 +22,8 @@ class PP_Controller:
                 start_scale_speed,
                 end_scale_speed,
                 downscale_factor,
+                steer_boost_per_mps,
+                steer_boost_max,
                 speed_lookahead_for_steer,
 
                 prioritize_dyn,
@@ -48,6 +52,8 @@ class PP_Controller:
         self.start_scale_speed = start_scale_speed
         self.end_scale_speed = end_scale_speed
         self.downscale_factor = downscale_factor
+        self.steer_boost_per_mps = steer_boost_per_mps
+        self.steer_boost_max = steer_boost_max
         self.speed_lookahead_for_steer = speed_lookahead_for_steer
 
         self.prioritize_dyn = prioritize_dyn
@@ -62,7 +68,6 @@ class PP_Controller:
 
         # Parameters in the controller
         self.lateral_error_list = [] # list of squared lateral error 
-        self.curr_steering_angle = 0
         self.idx_nearest_waypoint = None # index of nearest waypoint to car
         self.track_length = None
 
@@ -165,15 +170,6 @@ class PP_Controller:
         # modifying steer based on speed
         steering_angle = self.speed_steer_scaling(steering_angle, speed_for_lu)
 
-        # modifying steer based on velocity
-        steering_angle *= np.clip(1 + (self.speed_now/10), 1, 1.25)
-        
-        # limit change of steering angle
-        threshold = 0.4
-        if abs(steering_angle - self.curr_steering_angle) > threshold:
-            self.logger_info(f"[PP Controller] steering angle clipped")
-        steering_angle = np.clip(steering_angle, self.curr_steering_angle - threshold, self.curr_steering_angle + threshold) 
-        self.curr_steering_angle = steering_angle
         return steering_angle
 
     def calc_L1_point(self, lateral_error):
@@ -292,10 +288,16 @@ class PP_Controller:
         Returns:
             steer: scaled steering angle based on speed
         """
-        speed_diff = max(0.1,self.end_scale_speed-self.start_scale_speed) # to prevent division by zero
-        factor = 1 - np.clip((speed - self.start_scale_speed)/(speed_diff), 0.0, 1.0) * self.downscale_factor
-        steer *= factor
-        return steer
+        return scale_steering(
+            steer,
+            speed,
+            self.speed_now,
+            self.start_scale_speed,
+            self.end_scale_speed,
+            self.downscale_factor,
+            self.steer_boost_per_mps,
+            self.steer_boost_max,
+        )
 
     def calc_lateral_error_norm(self):
         """

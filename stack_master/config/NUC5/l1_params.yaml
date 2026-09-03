@@ -15,6 +15,9 @@ controller:
     start_scale_speed: 7.0
     end_scale_speed: 8.0
     downscale_factor: 0.2
+    # Preserve the controller's tuned speed-dependent steering boost explicitly.
+    steer_boost_per_mps: 0.1
+    steer_boost_max: 1.25
 
     # increasing this to 0.20 AT MOST can make the car faster on the laptime but cut more corners
     speed_lookahead_for_steer: 0.0 # safe/agg 0.0/0.175
@@ -35,4 +38,3 @@ controller:
     trailing_i_gain: 0.000
     trailing_d_gain: 0.2
     blind_trailing_speed: 1.5
-
