@@ -18,6 +18,8 @@ ros-humble-rosbridge-server
 ros-humble-serial-driver
 ros-humble-test-msgs
 ros-humble-rqt
+ros-humble-rqt-common-plugins
+ros-humble-rqt-reconfigure
 ros-humble-xacro
 ros-humble-nav2-map-server
 ros-humble-nav2-lifecycle-manager
