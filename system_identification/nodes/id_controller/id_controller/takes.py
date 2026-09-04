@@ -213,6 +213,22 @@ CORRIDOR = {
 ALL = {**TAKES, **CORRIDOR}
 
 
+def has_phase_independent_reference(name: str) -> bool:
+    """Whether a named take follows closed circular geometry.
+
+    Progress around these paths depends on the steering response being measured,
+    so it must not be inferred from elapsed time. The figure-eight is excluded:
+    its crossing still needs the time-local association.
+    """
+    return (name.startswith(("M1_circle_", "M2_skidpad_", "M5_speed_steps_"))
+            or name in {"M4_chirp_on_circle", "M7_doublets_on_circle"})
+
+
+def permits_radial_departure(name: str) -> bool:
+    """Whether leaving the nominal circle is an intended part of the take."""
+    return name.startswith("M2_skidpad_")
+
+
 def build(name: str) -> np.ndarray:
     """Return the (N, 2) command table for a named take, validated."""
     if name not in ALL:

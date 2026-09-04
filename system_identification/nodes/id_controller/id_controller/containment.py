@@ -114,6 +114,15 @@ def tracking_errors(path: np.ndarray, x: float, y: float, yaw: float,
     return float(cross_track), float(heading), index
 
 
+def tracking_limit_exceeded(cross_track: float, heading_error: float,
+                            max_cross_track: float, max_heading: float,
+                            permits_radial_departure: bool = False) -> bool:
+    """Return whether path tracking is lost under the maneuver's policy."""
+    radial_lost = (not permits_radial_departure
+                   and abs(cross_track) > max_cross_track)
+    return radial_lost or abs(heading_error) > max_heading
+
+
 def steering_correction(cross_track: float, heading_error: float, speed: float,
                         heading_gain: float, cross_track_gain: float,
                         speed_softening: float) -> float:

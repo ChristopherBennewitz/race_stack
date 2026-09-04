@@ -140,6 +140,11 @@ again, so you have time to inspect it while the command is still disarmed.
 During the take, a Stanley-like steering correction is low-pass filtered,
 rate-limited, and capped at 0.10 rad. Fast chirps and doublets are deliberately
 excluded from the reference geometry, so the feedback does not chase them.
+Closed circular references are matched by position rather than elapsed-time
+phase because their angular progress is one of the unknown vehicle responses.
+The M2 skidpad also permits radial departure from its nominal circle: pushing
+wide is the intended saturation signal, while heading loss and the live map
+clearance checks remain active.
 The predictor begins reducing requested speed below 0.75 m clearance. It stops
 at 0.32 m, approximately the footprint radius, and aborts if the measured car
 centre crosses that hard limit. Releasing button 5 is still the primary stop.

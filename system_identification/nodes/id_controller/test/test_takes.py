@@ -32,3 +32,11 @@ def test_fast_steering_excitation_is_not_in_containment_reference():
         commands = takes.build(name)
         reference = takes.reference_steering(name, commands)
         assert np.allclose(reference, expected)
+
+
+def test_closed_circle_tracking_policy():
+    for name in takes.ALL:
+        expected = (name.startswith(("M1_circle_", "M2_skidpad_", "M5_speed_steps_"))
+                    or name in {"M4_chirp_on_circle", "M7_doublets_on_circle"})
+        assert takes.has_phase_independent_reference(name) is expected
+        assert takes.permits_radial_departure(name) is name.startswith("M2_skidpad_")

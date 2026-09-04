@@ -69,10 +69,15 @@ class TakePlayer(Node):
             raise SystemExit(EXIT_ARGS)
 
         self.name = take or csv_path
-        # M1 intentionally measures an unknown steering gain, so the real car can
-        # advance around its circle faster or slower than the gain=1 reference.
-        # Track that geometry without imposing the reference's time phase.
-        self.phase_independent_reference = take.startswith("M1_circle_")
+        # Circular takes measure responses that determine their real radius and
+        # angular progress, so track their geometry without imposing time phase.
+        self.phase_independent_reference = (
+            takes_lib.has_phase_independent_reference(take) if take else False)
+        # M2 intentionally ramps into lateral saturation. Pushing outside the
+        # kinematic reference radius is its signal, not a loss of localization.
+        # Live and predicted occupancy clearance remain the hard spatial safety.
+        self.permits_radial_departure = (
+            takes_lib.permits_radial_departure(take) if take else False)
         self.reference_steer = (takes_lib.reference_steering(take, self.rows)
                                if take else self.rows[:, 0].copy())
         self.hz = float(self.get_parameter("rate_hz").value)
@@ -340,8 +345,9 @@ class TakePlayer(Node):
         cross_track, heading_error, _ = containment.tracking_errors(
             self.reference_path, x, y, yaw, min(self.i, len(self.rows) - 1), self.hz,
             phase_independent=self.phase_independent_reference)
-        if (abs(cross_track) > self.max_cross_track_error
-                or abs(heading_error) > self.max_heading_error):
+        if containment.tracking_limit_exceeded(
+                cross_track, heading_error, self.max_cross_track_error,
+                self.max_heading_error, self.permits_radial_departure):
             self._abort(
                 f"lost reference path: cross-track {cross_track:.2f} m, "
                 f"heading error {heading_error:.2f} rad")
