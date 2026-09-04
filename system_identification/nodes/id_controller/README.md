@@ -147,9 +147,9 @@ responses.
 M3 reserves 0.10 rad of steering authority on both sides of its nominal command
 and reverses each lobe only after odometry measures a full revolution; a lobe
 that takes more than twice its nominal duration aborts instead of circling
-indefinitely. At each reversal the next lobe is anchored at the measured car
-pose, checked against the safety map, and republished in RViz, so accumulated
-position error cannot make the reference jump away from the car.
+indefinitely. Its complete figure-eight reference remains anchored at the
+initial pose and is published once, so the target cannot wander after repeated
+lobe transitions.
 Its speed follows 1.0, 1.3, 1.6, 2.0, 1.6, 1.3, and 1.0 m/s at successive lobe
 boundaries. Smooth ramps happen in the middle of each lobe, leaving speed steady
 around every left/right steering reversal.
