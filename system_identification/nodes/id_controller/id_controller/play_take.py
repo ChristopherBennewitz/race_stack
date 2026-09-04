@@ -153,6 +153,7 @@ class TakePlayer(Node):
         self.map_field = None
         self.map_error = ""
         self.reference_path = None
+        self.figure_eight_path = None
         self.feedback = 0.0
         self.last_safety_scale = 1.0
         self.i = 0
@@ -317,11 +318,11 @@ class TakePlayer(Node):
         self.get_logger().info(
             f"reference path accepted; minimum map clearance {minimum:.2f} m")
 
-    def _publish_reference_path(self) -> None:
+    def _publish_reference_path(self, path=None) -> None:
         msg = Path()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.map_frame
-        for x, y, yaw in self.reference_path:
+        for x, y, yaw in self.reference_path if path is None else path:
             pose = PoseStamped()
             pose.header = msg.header
             pose.pose.position.x = float(x)
@@ -330,6 +331,30 @@ class TakePlayer(Node):
             pose.pose.orientation.w = math.cos(0.5 * yaw)
             msg.poses.append(pose)
         self.path_pub.publish(msg)
+
+    def _start_figure_eight_lobe(self, steer: float, speed: float) -> None:
+        """Anchor and safety-check one M3 circle at the measured crossover pose."""
+        if self.pose is None or self.map_field is None:
+            self._abort("cannot anchor figure-eight lobe without pose and map")
+            return
+        duration = takes_lib.revolution_seconds(abs(steer), abs(speed))
+        n_steps = max(1, int(round(duration * self.hz)))
+        commands = np.column_stack((
+            np.full(n_steps + 1, steer), np.full(n_steps + 1, speed)))
+        local_path = containment.integrate_reference(
+            commands, commands[:, 0], self.dt, self.wheelbase)
+        self.figure_eight_path = containment.transform_path(
+            local_path, self.pose[0], self.pose[1], self.pose[2])
+        minimum = self.map_field.path_clearance(self.figure_eight_path)
+        if minimum < self.path_clearance:
+            self._abort(
+                f"next figure-eight lobe has only {minimum:.2f} m map clearance; "
+                f"need {self.path_clearance:.2f} m")
+            return
+        self.feedback = 0.0
+        self._publish_reference_path(self.figure_eight_path)
+        self.get_logger().info(
+            f"figure-eight lobe anchored; minimum map clearance {minimum:.2f} m")
 
     def _publish_ackermann(self, publisher, steer: float, speed: float) -> None:
         if self.dry_run:
@@ -361,13 +386,9 @@ class TakePlayer(Node):
                 f"limit {self.hard_clearance:.2f} m")
             return nominal_steer, 0.0, 0.0, current_clearance
 
-        tracking_path = self.reference_path
-        if self.figure_eight is not None and abs(nominal_steer) > 1e-6:
-            # Repeated lobes of the same sign overlap, which is harmless. Exclude
-            # the opposite lobe so proximity at the crossover cannot associate
-            # the car with geometry for the other steering direction.
-            same_lobe_direction = self.reference_steer * nominal_steer > 0.0
-            tracking_path = self.reference_path[same_lobe_direction]
+        tracking_path = (self.figure_eight_path
+                         if self.figure_eight_path is not None
+                         else self.reference_path)
         cross_track, heading_error, _ = containment.tracking_errors(
             tracking_path, x, y, yaw, min(self.i, len(tracking_path) - 1), self.hz,
             phase_independent=self.phase_independent_reference)
@@ -429,11 +450,18 @@ class TakePlayer(Node):
             self._abort("no yaw available for figure-eight lobe tracking")
             return None
         previous_lobe = self.figure_eight.lobe_index
+        previous_start = self.figure_eight.lobe_start_yaw
         command = self.figure_eight.next_command(self.unwrapped_yaw)
         if self.figure_eight.timed_out:
             self._abort(
                 f"figure-eight lobe {previous_lobe + 1} did not complete before timeout")
             return None
+        started_lobe = (command is not None
+                        and self.figure_eight.lobe_start_yaw != previous_start)
+        if started_lobe:
+            self._start_figure_eight_lobe(*command)
+            if self.done:
+                return None
         if self.figure_eight.lobe_index != previous_lobe:
             message = f"figure-eight lobe {previous_lobe + 1} complete"
             if not self.figure_eight.complete:

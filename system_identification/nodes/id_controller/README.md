@@ -146,7 +146,9 @@ responses.
 M3 reserves 0.10 rad of steering authority on both sides of its nominal command
 and reverses each lobe only after odometry measures a full revolution; a lobe
 that takes more than twice its nominal duration aborts instead of circling
-indefinitely.
+indefinitely. At each reversal the next lobe is anchored at the measured car
+pose, checked against the safety map, and republished in RViz, so accumulated
+position error cannot make the reference jump away from the car.
 The M2 skidpad records some radial departure from its nominal circle, then ends
 successfully at the 0.75 m cross-track limit: pushing wide is the intended
 saturation signal. Heading loss and the live map-clearance checks remain aborts.
