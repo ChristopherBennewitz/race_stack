@@ -22,8 +22,8 @@ ros2 launch id_controller sysid_bringup_launch.xml mapping:=True map_name:=room5
 ros2 launch id_controller sysid_bringup_launch.xml mapping:=False map_name:=room5x5
 
 # 3. run the takes, holding joystick button 5 throughout each one
-ros2 run id_controller run_take M1_circle_0.34_L --out ~/sysid_bags
-ros2 run id_controller run_take room --out ~/sysid_bags        # all 19 box takes
+ros2 run id_controller run_take M1_circle_0.34_L
+ros2 run id_controller run_take room                           # all 19 box takes
 ros2 run id_controller run_take corridor --repeat 4            # the 5 straight takes
 ros2 run id_controller run_take --list                         # the manifest
 ```
@@ -32,6 +32,10 @@ ros2 run id_controller run_take --list                         # the manifest
 count down, play, stop, write a metadata sidecar. One take = one bag, never
 concatenated. Multi-take runs pause for you to reposition the stopped car before
 each new path. `--no-pause` suppresses this only when you intentionally want it.
+When `--out` is omitted, bags go to `sysid_bags/` at the `race_stack` repository
+root; the directory is created on the first recording and is gitignored. Docker
+Compose sets `RACE_STACK_ROOT` to its bind-mounted source path, so the same
+default writes into the host-visible project directory from inside the container.
 
 ## Check localization in RViz
 

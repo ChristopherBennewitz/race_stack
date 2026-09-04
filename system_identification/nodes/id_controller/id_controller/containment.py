@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import heapq
 import math
+import os
+from pathlib import Path
 
 import numpy as np
 
@@ -26,6 +28,22 @@ DEFAULT_PARAMETERS = {
     "max_cross_track_error": 0.75,
     "max_heading_error": 1.00,
 }
+
+
+def default_bag_directory(*starts) -> str:
+    """Return ``sysid_bags`` in the nearest repository, with a home fallback."""
+    configured_root = os.environ.get("RACE_STACK_ROOT")
+    if configured_root:
+        return str(Path(configured_root).expanduser() / "sysid_bags")
+    candidates = starts or (Path.cwd(), Path(__file__).resolve())
+    for candidate in candidates:
+        path = Path(candidate).expanduser().resolve()
+        if path.is_file():
+            path = path.parent
+        for directory in (path, *path.parents):
+            if (directory / ".git").exists():
+                return str(directory / "sysid_bags")
+    return str(Path.home() / "sysid_bags")
 
 
 def wrap_angle(angle: float) -> float:

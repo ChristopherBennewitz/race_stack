@@ -37,6 +37,7 @@ x-common-settings: &common-settings
     - TERM=xterm-256color
     - RMW_IMPLEMENTATION=rmw_zenoh_cpp
     - RACECAR_VERSION=${RACECAR_VERSION:-NUC1}
+    - RACE_STACK_ROOT=/home/${USER}/ws/src/race_stack
 
 services:
   jet:

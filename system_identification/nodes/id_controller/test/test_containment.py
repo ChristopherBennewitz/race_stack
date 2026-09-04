@@ -70,3 +70,18 @@ def test_twist_prediction_includes_lateral_slip():
     sliding_left = containment.predicted_twist_clearance(
         field, 1.0, 0.5, 0.0, 1.0, 1.0, 0.0, 0.8)
     assert sliding_left < no_slip
+
+
+def test_default_bag_directory_uses_repository_root(tmp_path):
+    repository = tmp_path / "race_stack"
+    nested = repository / "system_identification" / "id_controller"
+    nested.mkdir(parents=True)
+    (repository / ".git").mkdir()
+    assert containment.default_bag_directory(nested) == str(
+        repository / "sysid_bags")
+
+
+def test_default_bag_directory_honours_container_root(monkeypatch):
+    monkeypatch.setenv("RACE_STACK_ROOT", "/container/ws/src/race_stack")
+    assert containment.default_bag_directory() == (
+        "/container/ws/src/race_stack/sysid_bags")

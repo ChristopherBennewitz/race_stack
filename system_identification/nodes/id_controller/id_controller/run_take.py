@@ -197,7 +197,8 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("takes", nargs="*", help="take names, or 'room' / 'corridor' / 'all'")
     ap.add_argument("--list", action="store_true", help="print the manifest and exit")
-    ap.add_argument("--out", default="~/sysid_bags", help="directory for the bags")
+    ap.add_argument("--out", default=containment.default_bag_directory(),
+                    help="bag directory (default: <race_stack>/sysid_bags)")
     ap.add_argument("--repeat", type=int, default=1, help="runs per take")
     ap.add_argument("--rate", type=float, default=float(takes_lib.HZ),
                     help="control rate; must match extract_bags.py --control-hz")
