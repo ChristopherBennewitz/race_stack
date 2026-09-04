@@ -35,10 +35,6 @@ actuation_manager:
     # Limits are in controller-facing units: m/s, m/s^2, radians and rad/s.
     speed_min: -15.9053308824
     speed_max: 15.8042279412
-    # Below these measured rolling thresholds the sensorless motor stalls and
-    # emits a sustained high-pitched tone. Publish a true zero instead.
-    minimum_forward_speed: 0.45
-    minimum_reverse_speed: 0.55
     max_acceleration: 5.0
     max_deceleration: 5.0
     steering_min: -0.3461538462
