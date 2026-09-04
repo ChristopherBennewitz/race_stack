@@ -31,6 +31,30 @@ ros2 run id_controller run_take --list                         # the manifest
 count down, play, stop, write a metadata sidecar. One take = one bag, never
 concatenated.
 
+## Check localization in RViz
+
+Enable the focused RViz view while mapping or localizing:
+
+```bash
+ros2 launch id_controller sysid_bringup_launch.xml \
+  mapping:=False map_name:=room5x5 rviz:=True
+```
+
+Its fixed frame is `map`; it overlays `/scan` on `/map`, draws the
+`/car_state/odom` pose as an arrow, marks `base_link`, and exposes the TF tree.
+Before recording, drive slowly and check that the laser points remain on the
+walls, the arrow moves and turns in the correct direction, returning to the
+same physical spot returns to the same map pose, and no discontinuous jumps
+occur. A plausible moving arrow alone is not enough: a scan that swims across
+walls indicates bad localization or a bad sensor transform.
+
+RViz needs a display. Over SSH, use X forwarding or run RViz on a ROS-connected
+workstation with:
+
+```bash
+rviz2 -d "$(ros2 pkg prefix --share id_controller)/rviz/sysid_localization.rviz"
+```
+
 ## Hold button 5
 
 Button 5 is the autonomous deadman. The actuation manager only accepts

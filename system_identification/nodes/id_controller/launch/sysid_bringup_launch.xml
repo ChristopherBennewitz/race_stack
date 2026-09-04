@@ -36,6 +36,8 @@
     <arg name="map_saver" default="True"
          description="Run stack_master's mapping_node so 'y' saves the map.
                       Needs a TTY and a display; set False over a plain ssh." />
+    <arg name="rviz" default="False"
+         description="Open a focused map, scan, vehicle-pose and TF view." />
 
     <!-- car: lidar, VESC, IMU, joystick and physical-unit actuation manager -->
     <include file="$(find-pkg-share stack_master)/launch/teleop_launch.xml">
@@ -61,5 +63,11 @@
                 <param name="map_name" value="$(var map_name)" />
             </node>
         </group>
+    </group>
+
+    <!-- Optional operator view. Keep it opt-in so headless launches still work. -->
+    <group if="$(var rviz)">
+        <node pkg="rviz2" exec="rviz2" name="sysid_rviz" output="screen"
+              args="-d $(find-pkg-share id_controller)/rviz/sysid_localization.rviz" />
     </group>
 </launch>
