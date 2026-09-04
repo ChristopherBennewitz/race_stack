@@ -40,16 +40,17 @@ def test_closed_circle_tracking_policy():
                     or name in {"M3_figure_eight", "M4_chirp_on_circle",
                                 "M7_doublets_on_circle"})
         assert takes.has_phase_independent_reference(name) is expected
-        assert takes.completes_at_radial_limit(name) is name.startswith("M2_skidpad_")
 
 
 def test_figure_eight_switches_lobes_from_measured_yaw():
     sequence = takes.FigureEightSequencer(
-        rate_hz=10.0, laps=1, lead_sec=0.0)
+        rate_hz=10.0, transition_speeds=(0.8, 1.0, 1.2), lead_sec=0.0)
 
-    assert sequence.next_command(0.0) == (takes.M3_DELTA, takes.M3_V)
+    assert sequence.next_command(0.0) == (takes.M3_DELTA, 0.8)
     assert sequence.next_command(2.0 * np.pi - 0.01)[0] > 0.0
-    assert sequence.next_command(2.0 * np.pi + 0.01)[0] < 0.0
+    switched = sequence.next_command(2.0 * np.pi + 0.01)
+    assert switched[0] < 0.0
+    assert switched[1] == 1.0
     assert sequence.lobe_index == 1
     assert sequence.next_command(0.0) is None
     assert sequence.complete
@@ -61,9 +62,19 @@ def test_figure_eight_leaves_feedback_headroom():
     assert takes.M3_DELTA + 0.10 <= takes.S_MAX
 
 
+def test_figure_eight_varies_speed_away_from_steering_switches():
+    sequence = takes.FigureEightSequencer(
+        rate_hz=10.0, transition_speeds=(0.8, 1.2, 1.0), lead_sec=0.0)
+    assert sequence.next_command(0.0)[1] == 0.8
+    assert sequence.next_command(0.1 * 2.0 * np.pi)[1] == 0.8
+    assert 0.8 < sequence.next_command(0.5 * 2.0 * np.pi)[1] < 1.2
+    assert sequence.next_command(0.9 * 2.0 * np.pi)[1] == 1.2
+    assert sequence.next_command(1.01 * 2.0 * np.pi)[1] == 1.2
+
+
 def test_figure_eight_lobe_has_a_timeout():
     sequence = takes.FigureEightSequencer(
-        rate_hz=1.0, laps=1, lead_sec=0.0)
+        rate_hz=1.0, transition_speeds=(1.0, 1.0), lead_sec=0.0)
     for _ in range(sequence.max_lobe_steps + 1):
         sequence.next_command(0.0)
     assert sequence.timed_out

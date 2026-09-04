@@ -25,8 +25,6 @@ DEFAULT_PARAMETERS = {
     "correction_max": 0.10,
     "correction_tau": 0.60,
     "correction_rate": 0.20,
-    "max_cross_track_error": 0.75,
-    "max_heading_error": 1.00,
 }
 
 
@@ -112,17 +110,6 @@ def tracking_errors(path: np.ndarray, x: float, y: float, yaw: float,
     cross_track = -math.sin(ref_yaw) * dx + math.cos(ref_yaw) * dy
     heading = wrap_angle(ref_yaw - yaw)
     return float(cross_track), float(heading), index
-
-
-def tracking_limit_status(cross_track: float, heading_error: float,
-                          max_cross_track: float, max_heading: float,
-                          radial_limit_is_completion: bool = False) -> str:
-    """Classify tracking as okay, lost, or a successful radial-limit event."""
-    if abs(heading_error) > max_heading:
-        return "lost"
-    if abs(cross_track) > max_cross_track:
-        return "radial_limit" if radial_limit_is_completion else "lost"
-    return "ok"
 
 
 def steering_correction(cross_track: float, heading_error: float, speed: float,

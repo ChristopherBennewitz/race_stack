@@ -73,11 +73,6 @@ class TakePlayer(Node):
         # angular progress, so track their geometry without imposing time phase.
         self.phase_independent_reference = (
             takes_lib.has_phase_independent_reference(take) if take else False)
-        # M2 intentionally ramps into lateral saturation. Reaching the radial
-        # limit after pushing wide is a successful measurement endpoint, while
-        # live and predicted occupancy clearance remain hard spatial safety.
-        self.completes_at_radial_limit = (
-            takes_lib.completes_at_radial_limit(take) if take else False)
         self.reference_steer = (takes_lib.reference_steering(take, self.rows)
                                if take else self.rows[:, 0].copy())
         self.hz = float(self.get_parameter("rate_hz").value)
@@ -111,10 +106,6 @@ class TakePlayer(Node):
         self.correction_max = float(self.get_parameter("correction_max").value)
         self.correction_tau = float(self.get_parameter("correction_tau").value)
         self.correction_rate = float(self.get_parameter("correction_rate").value)
-        self.max_cross_track_error = float(
-            self.get_parameter("max_cross_track_error").value)
-        self.max_heading_error = float(
-            self.get_parameter("max_heading_error").value)
         if not (0.0 < self.hard_clearance < self.path_clearance
                 < self.slow_clearance):
             self.get_logger().error(
@@ -392,19 +383,6 @@ class TakePlayer(Node):
         cross_track, heading_error, _ = containment.tracking_errors(
             tracking_path, x, y, yaw, min(self.i, len(tracking_path) - 1), self.hz,
             phase_independent=self.phase_independent_reference)
-        tracking_status = containment.tracking_limit_status(
-            cross_track, heading_error, self.max_cross_track_error,
-            self.max_heading_error, self.completes_at_radial_limit)
-        if tracking_status == "radial_limit":
-            self._complete(
-                f"take complete: skid limit reached at cross-track "
-                f"{cross_track:.2f} m, heading error {heading_error:.2f} rad")
-            return nominal_steer, 0.0, 0.0, current_clearance
-        if tracking_status == "lost":
-            self._abort(
-                f"lost reference path: cross-track {cross_track:.2f} m, "
-                f"heading error {heading_error:.2f} rad")
-            return nominal_steer, 0.0, 0.0, current_clearance
         tracking_speed = (measured_speed if abs(measured_speed) > 0.10
                           else nominal_speed)
         raw = containment.steering_correction(

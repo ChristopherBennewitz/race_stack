@@ -149,9 +149,12 @@ that takes more than twice its nominal duration aborts instead of circling
 indefinitely. At each reversal the next lobe is anchored at the measured car
 pose, checked against the safety map, and republished in RViz, so accumulated
 position error cannot make the reference jump away from the car.
-The M2 skidpad records some radial departure from its nominal circle, then ends
-successfully at the 0.75 m cross-track limit: pushing wide is the intended
-saturation signal. Heading loss and the live map-clearance checks remain aborts.
+Its speed follows 1.0, 1.3, 1.6, 2.0, 1.6, 1.3, and 1.0 m/s at successive lobe
+boundaries. Smooth ramps happen in the middle of each lobe, leaving speed steady
+around every left/right steering reversal.
+Cross-track and heading errors drive the loose steering correction but do not
+abort a take. Spatial safety comes from the live and predicted map-clearance
+checks, so intended skids and imperfect path tracking can remain in the data.
 The predictor begins reducing requested speed below 0.75 m clearance. It stops
 at 0.32 m, approximately the footprint radius, and aborts if the measured car
 centre crosses that hard limit. Releasing button 5 is still the primary stop.

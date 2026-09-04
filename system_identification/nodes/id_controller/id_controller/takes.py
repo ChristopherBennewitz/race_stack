@@ -79,19 +79,34 @@ def m2(delta: float = 0.34, sign: float = 1.0, v0: float = 0.8, v1: float = 3.6,
 
 # --- M3: figure-eight, each lobe ends after one measured revolution -------------
 M3_DELTA = 0.24               # leaves the full 0.10 rad correction in either direction
-M3_V = 1.4
-M3_LAPS = 3
+M3_TRANSITION_SPEEDS = (1.0, 1.3, 1.6, 2.0, 1.6, 1.3, 1.0)
 M3_LEAD_SEC = 0.5
 M3_LOBE_TIMEOUT_FACTOR = 2.0
+M3_RAMP_START = 0.20          # hold speed around each steering reversal
+M3_RAMP_END = 0.80
 
 
-def m3(delta: float = M3_DELTA, v: float = M3_V,
-       laps: int = M3_LAPS) -> np.ndarray:
+def _m3_speed(v0, v1, progress):
+    """Smoothly change speed in the middle 60% of a lobe."""
+    phase = np.clip(
+        (np.asarray(progress) - M3_RAMP_START) / (M3_RAMP_END - M3_RAMP_START),
+        0.0, 1.0)
+    smooth = phase * phase * (3.0 - 2.0 * phase)
+    return v0 + (v1 - v0) * smooth
+
+
+def m3(delta: float = M3_DELTA,
+       transition_speeds: tuple[float, ...] = M3_TRANSITION_SPEEDS) -> np.ndarray:
     """Nominal M3 path used for preview and duration estimation."""
-    lobe = revolution_seconds(delta, v)
-    parts = [hold(M3_LEAD_SEC, 0.0, v)]
-    for _ in range(laps):
-        parts += [hold(lobe, +delta, v), hold(lobe, -delta, v)]
+    parts = [hold(M3_LEAD_SEC, 0.0, transition_speeds[0])]
+    for lobe_index, (v0, v1) in enumerate(
+            zip(transition_speeds, transition_speeds[1:])):
+        average_speed = 0.5 * (v0 + v1)
+        count = _n(revolution_seconds(delta, average_speed))
+        progress = np.linspace(0.0, 1.0, count)
+        speed = _m3_speed(v0, v1, progress)
+        direction = 1.0 if lobe_index % 2 == 0 else -1.0
+        parts.append(np.stack([np.full(count, direction * delta), speed], axis=-1))
     return cat(*parts)
 
 
@@ -99,13 +114,15 @@ class FigureEightSequencer:
     """Switch M3 lobes after measured yaw completes each revolution."""
 
     def __init__(self, rate_hz: float, delta: float = M3_DELTA,
-                 speed: float = M3_V, laps: int = M3_LAPS,
+                 transition_speeds: tuple[float, ...] = M3_TRANSITION_SPEEDS,
                  lead_sec: float = M3_LEAD_SEC) -> None:
         self.delta = float(delta)
-        self.speed = float(speed)
-        self.n_lobes = 2 * int(laps)
+        self.transition_speeds = tuple(float(v) for v in transition_speeds)
+        if len(self.transition_speeds) < 2 or min(self.transition_speeds) <= 0.0:
+            raise ValueError("figure-eight needs at least two positive boundary speeds")
+        self.n_lobes = len(self.transition_speeds) - 1
         self.lead_steps = int(round(lead_sec * rate_hz))
-        nominal_lobe = revolution_seconds(self.delta, self.speed)
+        nominal_lobe = revolution_seconds(self.delta, min(self.transition_speeds))
         self.max_lobe_steps = int(round(
             M3_LOBE_TIMEOUT_FACTOR * nominal_lobe * rate_hz))
         self.steps = 0
@@ -121,7 +138,7 @@ class FigureEightSequencer:
             return None
         if self.steps < self.lead_steps:
             self.steps += 1
-            return 0.0, self.speed
+            return 0.0, self.transition_speeds[0]
         if self.lobe_start_yaw is None:
             self.lobe_start_yaw = float(unwrapped_yaw)
 
@@ -135,13 +152,18 @@ class FigureEightSequencer:
             self.lobe_start_yaw = float(unwrapped_yaw)
             self.lobe_steps = 0
             direction = 1.0 if self.lobe_index % 2 == 0 else -1.0
+            progress = 0.0
 
         if self.lobe_steps >= self.max_lobe_steps:
             self.timed_out = True
             return None
         self.lobe_steps += 1
         self.steps += 1
-        return direction * self.delta, self.speed
+        fraction = float(np.clip(progress / (2.0 * np.pi), 0.0, 1.0))
+        speed = _m3_speed(
+            self.transition_speeds[self.lobe_index],
+            self.transition_speeds[self.lobe_index + 1], fraction)
+        return direction * self.delta, float(speed)
 
 
 # --- M4: steering chirp about a circular bias ----------------------------------
@@ -282,11 +304,6 @@ def has_phase_independent_reference(name: str) -> bool:
     return (name.startswith(("M1_circle_", "M2_skidpad_", "M5_speed_steps_"))
             or name in {"M3_figure_eight", "M4_chirp_on_circle",
                         "M7_doublets_on_circle"})
-
-
-def completes_at_radial_limit(name: str) -> bool:
-    """Whether reaching the radial limit successfully completes the take."""
-    return name.startswith("M2_skidpad_")
 
 
 def build(name: str) -> np.ndarray:
