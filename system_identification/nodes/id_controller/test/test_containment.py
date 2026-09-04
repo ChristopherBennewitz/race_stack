@@ -59,12 +59,12 @@ def test_circle_tracking_can_ignore_unknown_progress_phase():
     assert abs(circle_heading) < 1e-12
 
 
-def test_skidpad_radial_departure_keeps_heading_loss_active():
-    assert containment.tracking_limit_exceeded(-0.76, 0.08, 0.75, 1.0)
-    assert not containment.tracking_limit_exceeded(
-        -0.76, 0.08, 0.75, 1.0, permits_radial_departure=True)
-    assert containment.tracking_limit_exceeded(
-        -0.20, 1.01, 0.75, 1.0, permits_radial_departure=True)
+def test_skidpad_radial_limit_is_success_but_heading_loss_is_not():
+    status = containment.tracking_limit_status
+    assert status(-0.74, 0.08, 0.75, 1.0, True) == "ok"
+    assert status(-0.76, 0.08, 0.75, 1.0, True) == "radial_limit"
+    assert status(-0.20, 1.01, 0.75, 1.0, True) == "lost"
+    assert status(-0.76, 0.08, 0.75, 1.0, False) == "lost"
 
 
 def test_distance_field_treats_unknown_obstacles_and_boundary_as_unsafe():

@@ -224,8 +224,8 @@ def has_phase_independent_reference(name: str) -> bool:
             or name in {"M4_chirp_on_circle", "M7_doublets_on_circle"})
 
 
-def permits_radial_departure(name: str) -> bool:
-    """Whether leaving the nominal circle is an intended part of the take."""
+def completes_at_radial_limit(name: str) -> bool:
+    """Whether reaching the radial limit successfully completes the take."""
     return name.startswith("M2_skidpad_")
 
 

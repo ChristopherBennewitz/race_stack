@@ -142,9 +142,9 @@ rate-limited, and capped at 0.10 rad. Fast chirps and doublets are deliberately
 excluded from the reference geometry, so the feedback does not chase them.
 Closed circular references are matched by position rather than elapsed-time
 phase because their angular progress is one of the unknown vehicle responses.
-The M2 skidpad also permits radial departure from its nominal circle: pushing
-wide is the intended saturation signal, while heading loss and the live map
-clearance checks remain active.
+The M2 skidpad records some radial departure from its nominal circle, then ends
+successfully at the 0.75 m cross-track limit: pushing wide is the intended
+saturation signal. Heading loss and the live map-clearance checks remain aborts.
 The predictor begins reducing requested speed below 0.75 m clearance. It stops
 at 0.32 m, approximately the footprint radius, and aborts if the measured car
 centre crosses that hard limit. Releasing button 5 is still the primary stop.

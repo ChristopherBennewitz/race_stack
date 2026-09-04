@@ -39,4 +39,4 @@ def test_closed_circle_tracking_policy():
         expected = (name.startswith(("M1_circle_", "M2_skidpad_", "M5_speed_steps_"))
                     or name in {"M4_chirp_on_circle", "M7_doublets_on_circle"})
         assert takes.has_phase_independent_reference(name) is expected
-        assert takes.permits_radial_departure(name) is name.startswith("M2_skidpad_")
+        assert takes.completes_at_radial_limit(name) is name.startswith("M2_skidpad_")

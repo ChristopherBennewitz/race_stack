@@ -73,11 +73,11 @@ class TakePlayer(Node):
         # angular progress, so track their geometry without imposing time phase.
         self.phase_independent_reference = (
             takes_lib.has_phase_independent_reference(take) if take else False)
-        # M2 intentionally ramps into lateral saturation. Pushing outside the
-        # kinematic reference radius is its signal, not a loss of localization.
-        # Live and predicted occupancy clearance remain the hard spatial safety.
-        self.permits_radial_departure = (
-            takes_lib.permits_radial_departure(take) if take else False)
+        # M2 intentionally ramps into lateral saturation. Reaching the radial
+        # limit after pushing wide is a successful measurement endpoint, while
+        # live and predicted occupancy clearance remain hard spatial safety.
+        self.completes_at_radial_limit = (
+            takes_lib.completes_at_radial_limit(take) if take else False)
         self.reference_steer = (takes_lib.reference_steering(take, self.rows)
                                if take else self.rows[:, 0].copy())
         self.hz = float(self.get_parameter("rate_hz").value)
@@ -251,6 +251,16 @@ class TakePlayer(Node):
         self.done = True
         self.get_logger().error(f"ABORT: {reason}")
 
+    def _complete(self, reason: str = "take complete") -> None:
+        """Stop command playback with a successful outcome."""
+        if self.done:
+            return
+        self.t_end = time.monotonic()
+        if hasattr(self, "timer"):
+            self.timer.cancel()
+        self.done = True
+        self.get_logger().info(reason)
+
     def _wait_for_deadman(self) -> None:
         if self.deadman_held:
             self.get_logger().info(
@@ -345,9 +355,15 @@ class TakePlayer(Node):
         cross_track, heading_error, _ = containment.tracking_errors(
             self.reference_path, x, y, yaw, min(self.i, len(self.rows) - 1), self.hz,
             phase_independent=self.phase_independent_reference)
-        if containment.tracking_limit_exceeded(
-                cross_track, heading_error, self.max_cross_track_error,
-                self.max_heading_error, self.permits_radial_departure):
+        tracking_status = containment.tracking_limit_status(
+            cross_track, heading_error, self.max_cross_track_error,
+            self.max_heading_error, self.completes_at_radial_limit)
+        if tracking_status == "radial_limit":
+            self._complete(
+                f"take complete: skid limit reached at cross-track "
+                f"{cross_track:.2f} m, heading error {heading_error:.2f} rad")
+            return nominal_steer, 0.0, 0.0, current_clearance
+        if tracking_status == "lost":
             self._abort(
                 f"lost reference path: cross-track {cross_track:.2f} m, "
                 f"heading error {heading_error:.2f} rad")
@@ -395,7 +411,7 @@ class TakePlayer(Node):
                 self._contained_command(nominal_steer, nominal_speed)
                 if self.containment_enabled
                 else (nominal_steer, nominal_speed, 0.0, math.inf))
-            if self.aborted:
+            if self.done:
                 return
             self._publish_ackermann(
                 self.nominal_pub, nominal_steer, nominal_speed)
@@ -417,10 +433,7 @@ class TakePlayer(Node):
                                     -takes_lib.S_MAX, takes_lib.S_MAX)), 0.0)
             self.tail += 1
             return
-        self.t_end = time.monotonic()
-        self.timer.cancel()
-        self.done = True
-        self.get_logger().info("take complete")
+        self._complete()
 
     def report_rate(self) -> None:
         if self.t_start is None or self.t_end is None or self.i == 0:
