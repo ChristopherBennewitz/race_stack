@@ -89,10 +89,21 @@ def transform_path(path: np.ndarray, x: float, y: float, yaw: float) -> np.ndarr
 
 
 def tracking_errors(path: np.ndarray, x: float, y: float, yaw: float,
-                    expected_index: int, rate_hz: float) -> tuple[float, float, int]:
-    """Return cross-track/heading errors at the nearby closest path point."""
-    lo = max(0, expected_index - int(round(3.0 * rate_hz)))
-    hi = min(len(path), expected_index + int(round(1.0 * rate_hz)) + 1)
+                    expected_index: int, rate_hz: float,
+                    phase_independent: bool = False) -> tuple[float, float, int]:
+    """Return cross-track/heading errors at the closest applicable path point.
+
+    Most maneuvers use a time-local window so an intersection cannot associate the
+    car with the wrong branch.  A repeated circle is different: its real angular
+    progress is deliberately unknown because the take identifies steering gain.
+    For those paths, searching the whole circle prevents accumulated phase error
+    from being mistaken for a heading error near the end of the take.
+    """
+    if phase_independent:
+        lo, hi = 0, len(path)
+    else:
+        lo = max(0, expected_index - int(round(3.0 * rate_hz)))
+        hi = min(len(path), expected_index + int(round(1.0 * rate_hz)) + 1)
     segment = path[lo:hi]
     distances = np.square(segment[:, 0] - x) + np.square(segment[:, 1] - y)
     index = lo + int(np.argmin(distances))

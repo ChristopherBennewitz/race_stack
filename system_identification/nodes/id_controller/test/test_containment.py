@@ -37,6 +37,28 @@ def test_reverse_heading_correction_changes_sign():
     assert reverse < 0.0
 
 
+def test_circle_tracking_can_ignore_unknown_progress_phase():
+    """A faster real circle must not look lost only because it is ahead in time."""
+    rate_hz = 40.0
+    commands = np.array([[0.30, 0.60]] * 600)
+    path = containment.integrate_reference(
+        commands, commands[:, 0], 1.0 / rate_hz, 0.32)
+
+    expected_index = 320
+    actual_index = 440  # three seconds ahead: outside the normal +1 s window
+    x, y, yaw = path[actual_index]
+
+    _, timed_heading, timed_index = containment.tracking_errors(
+        path, x, y, yaw, expected_index, rate_hz)
+    _, circle_heading, circle_index = containment.tracking_errors(
+        path, x, y, yaw, expected_index, rate_hz, phase_independent=True)
+
+    assert timed_index <= expected_index + int(rate_hz)
+    assert abs(timed_heading) > 1.0
+    assert circle_index == actual_index
+    assert abs(circle_heading) < 1e-12
+
+
 def test_distance_field_treats_unknown_obstacles_and_boundary_as_unsafe():
     grid = np.zeros((7, 7), dtype=int)
     grid[3, 3] = 100
