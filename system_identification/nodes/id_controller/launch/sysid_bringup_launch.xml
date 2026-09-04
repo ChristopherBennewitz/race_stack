@@ -1,0 +1,65 @@
+<!-- -*- mode: XML -*- -->
+<!--
+  Car + SLAM pose, and nothing else. This is the bring-up for open-loop
+  identification takes: no global trajectory, no sectors, no lap analyser, no
+  state machine, no controller — none of which a 5 x 5 m room can provide and
+  none of which may be in the command path during a take.
+
+  Two modes:
+
+    mapping:=True   (default) cartographer builds the map as you drive. Needs no
+                    map on disk, so it works in a room you have never been in.
+                    The live pose is retro-deformed by loop closures, so use this
+                    to make the map, not to record takes.
+
+    mapping:=False  cartographer runs pure localization against a saved map.
+                    Needs maps/<map_name>/<map_name>.yaml and .pbstream, which
+                    stack_master's mapping_node writes when you press 'y'. This
+                    is what the takes should run against: the frame is then fixed
+                    and shared across every take.
+
+  Usage:
+    ros2 launch id_controller sysid_bringup_launch.xml racecar_version:=NUC2 \
+        mapping:=True map_name:=room5x5           # once, to build the map
+    ros2 launch id_controller sysid_bringup_launch.xml racecar_version:=NUC2 \
+        mapping:=False map_name:=room5x5          # for every take
+
+  RACECAR_VERSION must be a NUCx: config/SIM has no cartographer .lua files.
+-->
+<launch>
+    <arg name="racecar_version" default="$(env RACECAR_VERSION)"
+         description="'NUC2' / 'NUC5' / 'NUC6' / 'NUC7' -- not SIM" />
+    <arg name="map_name" default="latest"
+         description="Map in stack_master/maps; only read when mapping:=False" />
+    <arg name="mapping" default="True"
+         description="True builds a map, False localizes against a saved one" />
+    <arg name="map_saver" default="True"
+         description="Run stack_master's mapping_node so 'y' saves the map.
+                      Needs a TTY and a display; set False over a plain ssh." />
+
+    <!-- car: lidar, VESC, IMU, joystick and physical-unit actuation manager -->
+    <include file="$(find-pkg-share stack_master)/launch/teleop_launch.xml">
+        <arg name="racecar_version" value="$(var racecar_version)" />
+    </include>
+
+    <!-- EKF early fusion + cartographer + carstate (publishes /car_state/odom) -->
+    <include file="$(find-pkg-share state_estimation)/launch/state_estimation_launch.xml">
+        <arg name="racecar_version" value="$(var racecar_version)" />
+        <arg name="mapping_bool" value="$(var mapping)" />
+        <arg name="map_name" value="$(var map_name)" />
+        <arg name="frenet_bool" value="False" />
+        <arg name="use_sim_time" value="False" />
+    </include>
+
+    <!-- map saver, mapping mode only: press 'y' in its terminal to write the
+         .png/.yaml/.pbstream that localization mode then reads -->
+    <group if="$(var mapping)">
+        <group if="$(var map_saver)">
+            <node pkg="global_planner" exec="mapping_node" name="mapping_node"
+                  output="screen" emulate_tty="true">
+                <param from="$(find-pkg-share stack_master)/config/global_planner/mapping.yaml" />
+                <param name="map_name" value="$(var map_name)" />
+            </node>
+        </group>
+    </group>
+</launch>
