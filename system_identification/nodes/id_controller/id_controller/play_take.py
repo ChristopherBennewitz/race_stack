@@ -85,6 +85,9 @@ class TakePlayer(Node):
         self.frame = str(self.get_parameter("frame_id").value)
         self.map_frame = str(self.get_parameter("map_frame").value)
         self.dry_run = bool(self.get_parameter("dry_run").value)
+        self.figure_eight = (
+            takes_lib.FigureEightSequencer(self.hz)
+            if take == "M3_figure_eight" and not self.dry_run else None)
         self.containment_enabled = bool(
             self.get_parameter("containment_enabled").value)
         self.require_deadman = bool(self.get_parameter("require_deadman").value)
@@ -146,6 +149,7 @@ class TakePlayer(Node):
         self.pose = None
         self.pose_received = None
         self.previous_pose = None
+        self.unwrapped_yaw = None
         self.map_field = None
         self.map_error = ""
         self.reference_path = None
@@ -213,6 +217,11 @@ class TakePlayer(Node):
                    float(msg.twist.twist.linear.x),
                    float(msg.twist.twist.linear.y),
                    float(msg.twist.twist.angular.z))
+        if self.unwrapped_yaw is None:
+            self.unwrapped_yaw = current[2]
+        elif self.previous_pose is not None:
+            self.unwrapped_yaw += containment.wrap_angle(
+                current[2] - self.previous_pose[2])
         if self.previous_pose is not None and self.t_start is not None:
             distance = math.hypot(current[0] - self.previous_pose[0],
                                   current[1] - self.previous_pose[1])
@@ -352,8 +361,15 @@ class TakePlayer(Node):
                 f"limit {self.hard_clearance:.2f} m")
             return nominal_steer, 0.0, 0.0, current_clearance
 
+        tracking_path = self.reference_path
+        if self.figure_eight is not None and abs(nominal_steer) > 1e-6:
+            # Repeated lobes of the same sign overlap, which is harmless. Exclude
+            # the opposite lobe so proximity at the crossover cannot associate
+            # the car with geometry for the other steering direction.
+            same_lobe_direction = self.reference_steer * nominal_steer > 0.0
+            tracking_path = self.reference_path[same_lobe_direction]
         cross_track, heading_error, _ = containment.tracking_errors(
-            self.reference_path, x, y, yaw, min(self.i, len(self.rows) - 1), self.hz,
+            tracking_path, x, y, yaw, min(self.i, len(tracking_path) - 1), self.hz,
             phase_independent=self.phase_independent_reference)
         tracking_status = containment.tracking_limit_status(
             cross_track, heading_error, self.max_cross_track_error,
@@ -402,11 +418,37 @@ class TakePlayer(Node):
         self.last_safety_scale = scale
         return steer, speed, steer - nominal_steer, clearance
 
+    def _next_nominal_command(self) -> tuple[float, float] | None:
+        """Return the next table command, or the pose-driven M3 command."""
+        if self.figure_eight is None:
+            if self.i >= len(self.rows):
+                return None
+            steer, speed = self.rows[self.i]
+            return float(steer), float(speed)
+        if self.unwrapped_yaw is None:
+            self._abort("no yaw available for figure-eight lobe tracking")
+            return None
+        previous_lobe = self.figure_eight.lobe_index
+        command = self.figure_eight.next_command(self.unwrapped_yaw)
+        if self.figure_eight.timed_out:
+            self._abort(
+                f"figure-eight lobe {previous_lobe + 1} did not complete before timeout")
+            return None
+        if self.figure_eight.lobe_index != previous_lobe:
+            message = f"figure-eight lobe {previous_lobe + 1} complete"
+            if not self.figure_eight.complete:
+                message += f"; starting lobe {self.figure_eight.lobe_index + 1}"
+            self.get_logger().info(message)
+        return command
+
     def tick(self) -> None:
         if self.aborted:
             return
-        if self.i < len(self.rows):
-            nominal_steer, nominal_speed = self.rows[self.i]
+        nominal = self._next_nominal_command()
+        if self.done:
+            return
+        if nominal is not None:
+            nominal_steer, nominal_speed = nominal
             steer, speed, correction, clearance = (
                 self._contained_command(nominal_steer, nominal_speed)
                 if self.containment_enabled

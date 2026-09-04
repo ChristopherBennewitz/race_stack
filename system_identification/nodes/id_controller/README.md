@@ -143,6 +143,10 @@ excluded from the reference geometry, so the feedback does not chase them.
 Closed circle and figure-eight references are matched by position rather than
 elapsed-time phase because their angular progress is one of the unknown vehicle
 responses.
+M3 reserves 0.10 rad of steering authority on both sides of its nominal command
+and reverses each lobe only after odometry measures a full revolution; a lobe
+that takes more than twice its nominal duration aborts instead of circling
+indefinitely.
 The M2 skidpad records some radial departure from its nominal circle, then ends
 successfully at the 0.75 m cross-track limit: pushing wide is the intended
 saturation signal. Heading loss and the live map-clearance checks remain aborts.

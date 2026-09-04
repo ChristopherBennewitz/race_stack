@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Feed-forward excitation takes for the F1TENTH identification campaign.
 
-One take = one recording = one bag. Every take is a fixed table of
+One take = one recording = one bag. Takes provide a nominal table of
 ``(steer_cmd [rad], vel_cmd [m/s])`` sampled at ``HZ``. The player adds a
-separately logged, low-bandwidth containment correction to these commands.
+separately logged, low-bandwidth containment correction. M3 additionally uses
+measured yaw to decide when its fixed-steering lobes reverse.
 
 The manifest is split in two because the two sets need different spaces:
 
@@ -76,13 +77,71 @@ def m2(delta: float = 0.34, sign: float = 1.0, v0: float = 0.8, v1: float = 3.6,
                hold(1.5, sign * delta, v1))
 
 
-# --- M3: figure-eight, lobe = one revolution at the worst-case radius -----------
-def m3(delta: float = 0.34, v: float = 1.4, laps: int = 3) -> np.ndarray:
+# --- M3: figure-eight, each lobe ends after one measured revolution -------------
+M3_DELTA = 0.24               # leaves the full 0.10 rad correction in either direction
+M3_V = 1.4
+M3_LAPS = 3
+M3_LEAD_SEC = 0.5
+M3_LOBE_TIMEOUT_FACTOR = 2.0
+
+
+def m3(delta: float = M3_DELTA, v: float = M3_V,
+       laps: int = M3_LAPS) -> np.ndarray:
+    """Nominal M3 path used for preview and duration estimation."""
     lobe = revolution_seconds(delta, v)
-    parts = [hold(0.5, 0.0, v)]
+    parts = [hold(M3_LEAD_SEC, 0.0, v)]
     for _ in range(laps):
         parts += [hold(lobe, +delta, v), hold(lobe, -delta, v)]
     return cat(*parts)
+
+
+class FigureEightSequencer:
+    """Switch M3 lobes after measured yaw completes each revolution."""
+
+    def __init__(self, rate_hz: float, delta: float = M3_DELTA,
+                 speed: float = M3_V, laps: int = M3_LAPS,
+                 lead_sec: float = M3_LEAD_SEC) -> None:
+        self.delta = float(delta)
+        self.speed = float(speed)
+        self.n_lobes = 2 * int(laps)
+        self.lead_steps = int(round(lead_sec * rate_hz))
+        nominal_lobe = revolution_seconds(self.delta, self.speed)
+        self.max_lobe_steps = int(round(
+            M3_LOBE_TIMEOUT_FACTOR * nominal_lobe * rate_hz))
+        self.steps = 0
+        self.lobe_steps = 0
+        self.lobe_index = 0
+        self.lobe_start_yaw = None
+        self.complete = False
+        self.timed_out = False
+
+    def next_command(self, unwrapped_yaw: float) -> tuple[float, float] | None:
+        """Return the next nominal command, or ``None`` once M3 is finished."""
+        if self.complete or self.timed_out:
+            return None
+        if self.steps < self.lead_steps:
+            self.steps += 1
+            return 0.0, self.speed
+        if self.lobe_start_yaw is None:
+            self.lobe_start_yaw = float(unwrapped_yaw)
+
+        direction = 1.0 if self.lobe_index % 2 == 0 else -1.0
+        progress = direction * (float(unwrapped_yaw) - self.lobe_start_yaw)
+        if progress >= 2.0 * np.pi:
+            self.lobe_index += 1
+            if self.lobe_index >= self.n_lobes:
+                self.complete = True
+                return None
+            self.lobe_start_yaw = float(unwrapped_yaw)
+            self.lobe_steps = 0
+            direction = 1.0 if self.lobe_index % 2 == 0 else -1.0
+
+        if self.lobe_steps >= self.max_lobe_steps:
+            self.timed_out = True
+            return None
+        self.lobe_steps += 1
+        self.steps += 1
+        return direction * self.delta, self.speed
 
 
 # --- M4: steering chirp about a circular bias ----------------------------------
