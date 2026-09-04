@@ -1,8 +1,9 @@
-# id_controller — open-loop identification takes
+# id_controller — safely contained identification takes
 
 Drives predefined feed-forward excitation maneuvers and records one bag per
-take. Nothing in this package reacts to the car except the abort path, which
-can stop it but never steer it.
+take. A deliberately slow, capped pose-feedback correction keeps the car near
+the intended path without hiding the faster identification signal. The map
+safety layer reduces speed near walls and stops on stale or jumping localization.
 
 ## Quick start
 
@@ -21,7 +22,7 @@ ros2 launch id_controller sysid_bringup_launch.xml mapping:=True map_name:=room5
 ros2 launch id_controller sysid_bringup_launch.xml mapping:=False map_name:=room5x5
 
 # 3. run the takes, holding joystick button 5 throughout each one
-ros2 run id_controller run_take M2_skidpad_L --out ~/sysid_bags
+ros2 run id_controller run_take M1_circle_0.34_L --out ~/sysid_bags
 ros2 run id_controller run_take room --out ~/sysid_bags        # all 19 box takes
 ros2 run id_controller run_take corridor --repeat 4            # the 5 straight takes
 ros2 run id_controller run_take --list                         # the manifest
@@ -29,7 +30,8 @@ ros2 run id_controller run_take --list                         # the manifest
 
 `run_take` does the whole sequence per take: preflight, start `ros2 bag record`,
 count down, play, stop, write a metadata sidecar. One take = one bag, never
-concatenated.
+concatenated. Multi-take runs pause for you to reposition the stopped car before
+each new path. `--no-pause` suppresses this only when you intentionally want it.
 
 ## Check localization in RViz
 
@@ -40,8 +42,9 @@ ros2 launch id_controller sysid_bringup_launch.xml \
   mapping:=False map_name:=room5x5 rviz:=True
 ```
 
-Its fixed frame is `map`; it overlays `/scan` on `/map`, draws the
-`/car_state/odom` pose as an arrow, marks `base_link`, and exposes the TF tree.
+Its fixed frame is `map`; it overlays `/scan` on Cartographer's `/map`, overlays
+the editable `/sysid/safety_map`, draws `/car_state/odom` as an arrow, shows the
+blue `/sysid/reference_path`, marks `base_link`, and exposes the TF tree.
 Before recording, drive slowly and check that the laser points remain on the
 walls, the arrow moves and turns in the correct direction, returning to the
 same physical spot returns to the same map pose, and no discontinuous jumps
@@ -60,7 +63,9 @@ rviz2 -d "$(ros2 pkg prefix --share id_controller)/rviz/sysid_localization.rviz"
 Button 5 is the autonomous deadman. The actuation manager only accepts
 `/drive` while it is held. Button 4 is the human deadman and only authorizes
 `/teleop`. The player also aborts if button 5 is released or button 4 is
-pressed, so a human command cannot be mixed into a take.
+pressed, so a human command cannot be mixed into a take. Hold button 5 for
+preflight; after publishing the reference path, the player deliberately asks
+you to release and press it again to arm the take.
 
 ## Entry points
 
@@ -80,16 +85,16 @@ python3 -m id_controller.takes --csv out/
 
 Useful `run_take` flags: `--repeat N`, `--rate HZ`, `--no-bag`, `--dry-run`
 (runs the timing loop and publishes nothing), `--no-deadman` (bench only),
-`--skip-preflight`.
+`--skip-preflight`. `--open-loop` disables containment and is only for a
+deliberately controlled comparison in a sufficiently large clear area.
 
 ## What preflight checks, and why
 
 Each of these has silently ruined a recording before — the bag looks fine and is
 unidentifiable.
 
-- **`drive_exclusive`** — exactly one publisher on `/drive`. If the controller or
-  state machine is up it publishes too, the streams interleave, and the command
-  ends up correlated with the state it was reacting to.
+- **`drive_exclusive`** — exactly one publisher on `/drive`. Containment lives
+  inside `play_take`; any other controller would interleave commands with it.
 - **`teleop_silent`** — unexpected human commands are reported, although button
   5 prevents them from being selected.
 - **`deadman_held`** — button 5 held for the whole preflight window.
@@ -111,11 +116,63 @@ unidentifiable.
   -> vesc_driver
 ```
 
+The player records `/sysid/nominal_cmd`, adds its slow steering correction in
+`/sysid/containment_correction`, and publishes their bounded sum on `/drive`.
 The manager applies the configured speed/steering bounds, acceleration and
 steering-rate limits, deadman selection, and stale-command stop. Therefore the
 requested steps on `/drive` may become ramps or clips. This is intentional and
 observable: fit the vehicle model using `/ackermann_cmd_applied`, not `/drive`.
 The metadata sidecar records those limits and the VESC conversion constants.
+
+## Containment behavior
+
+At the start of a take, the current map pose anchors its kinematic reference
+path. The run is refused before motion if any reference point has less than
+0.42 m occupancy-map clearance. Reposition or rotate the stationary car until
+the blue path fits in RViz, then start the take again. For an accepted path the
+player publishes it first and requires button 5 to be released and pressed
+again, so you have time to inspect it while the command is still disarmed.
+
+During the take, a Stanley-like steering correction is low-pass filtered,
+rate-limited, and capped at 0.10 rad. Fast chirps and doublets are deliberately
+excluded from the reference geometry, so the feedback does not chase them.
+The predictor begins reducing requested speed below 0.75 m clearance. It stops
+at 0.32 m, approximately the footprint radius, and aborts if the measured car
+centre crosses that hard limit. Releasing button 5 is still the primary stop.
+
+These are conservative initial values, not a guarantee against collision:
+Cartographer delay, map error, tire slip, and braking distance still matter.
+Start with `M1_circle_0.34_L` at 0.6 m/s while watching RViz. Only increase the
+maneuver severity after the path, pose, correction, and stopping behavior look
+sound. Use `/ackermann_cmd_applied` for fitting; the two `/sysid/...` command
+topics let analysis measure or reject intervals with excessive intervention.
+
+## Editable keep-out map
+
+Containment deliberately does not use Cartographer's live `/map`. Localization
+continues to scan-match against the saved `.pbstream`, while a dedicated map
+server loads `safety_map_yaml` onto `/sysid/safety_map`. By default this is the
+saved `<map_name>.yaml` and PNG.
+
+To add virtual keep-out areas, preferably copy the PNG and YAML to names such as
+`room5x5_safety.png` and `room5x5_safety.yaml`, then change the YAML's `image`
+entry to the copied PNG. Paint forbidden space black; leave usable space white.
+Unknown/gray space and pixels above the occupied threshold are also treated as
+blocked. Preserve the image dimensions, orientation, YAML resolution, and YAML
+origin so the mask stays registered with Cartographer.
+
+Launch localization with the edited safety YAML:
+
+```bash
+ros2 launch id_controller sysid_bringup_launch.xml \
+  mapping:=False map_name:=room5x5 rviz:=True \
+  safety_map_yaml:=/home/race_crew/ws/src/race_stack/stack_master/maps/room5x5/room5x5_safety.yaml
+```
+
+Restart the launch after every edit. If you edit the default map inside the
+source tree rather than passing an absolute safety YAML, rebuild `stack_master`
+and source the workspace so its installed share contains the change. Do not
+edit, resize, or regenerate the `.pbstream` for keep-out zones.
 
 The old mux and throttle interpolator are not in the active path. The former
 hardcoded steering factor is already rolled into

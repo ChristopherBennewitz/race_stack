@@ -23,3 +23,12 @@ def test_all_takes_are_finite_and_within_command_bounds():
 def test_no_take_requests_reverse_motion():
     for name in takes.ALL:
         assert takes.build(name)[:, 1].min() >= 0.0
+
+
+def test_fast_steering_excitation_is_not_in_containment_reference():
+    for name, expected in (("M4_chirp_on_circle", 0.24),
+                           ("M7_doublets_on_circle", 0.17),
+                           ("C5_chirp_highband", 0.0)):
+        commands = takes.build(name)
+        reference = takes.reference_steering(name, commands)
+        assert np.allclose(reference, expected)

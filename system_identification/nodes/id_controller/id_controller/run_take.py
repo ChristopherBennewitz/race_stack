@@ -11,7 +11,8 @@ after the take. Nothing is concatenated.
 
 The metadata sidecar written next to each bag captures both the VESC conversion
 and the physical-unit actuation limits.  Estimation should use
-``/ackermann_cmd_applied`` as its input; ``/drive`` is the requested excitation.
+``/ackermann_cmd_applied`` as its input. ``/sysid/nominal_cmd`` preserves the
+excitation and ``/sysid/containment_correction`` records the feedback component.
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ import sys
 import time
 from datetime import datetime
 
+from id_controller import containment
 from id_controller import preflight as pf
 from id_controller import takes as takes_lib
 
@@ -140,6 +142,7 @@ def run_one(take: str, args: argparse.Namespace, index: int, total: int) -> int:
         "-p", f"countdown:={args.countdown}",
         "-p", f"require_deadman:={'false' if args.no_deadman else 'true'}",
         "-p", f"dry_run:={'true' if args.dry_run else 'false'}",
+        "-p", f"containment_enabled:={'false' if args.open_loop else 'true'}",
     ]
     code = subprocess.call(player)
 
@@ -164,10 +167,17 @@ def run_one(take: str, args: argparse.Namespace, index: int, total: int) -> int:
             "actuation_configuration": _actuation_configuration(
                 os.environ.get("RACECAR_VERSION", "")) or "unavailable",
             "command_topics": {
+                "nominal_excitation": "/sysid/nominal_cmd",
+                "containment_correction": "/sysid/containment_correction",
                 "requested": "/drive",
                 "applied_si_units": "/ackermann_cmd_applied",
                 "final_motor_erpm": "/commands/motor/speed",
                 "final_servo_position": "/commands/servo/position",
+            },
+            "containment_enabled": not args.open_loop,
+            "containment_configuration": {
+                "wheelbase": takes_lib.L,
+                **containment.DEFAULT_PARAMETERS,
             },
             "note": ("Fit vehicle dynamics from /ackermann_cmd_applied. The "
                      "configured steering conversion already includes the "
@@ -199,6 +209,10 @@ def main() -> None:
     ap.add_argument("--no-bag", action="store_true", help="do not record")
     ap.add_argument("--dry-run", action="store_true",
                     help="run the timing loop but publish no commands")
+    ap.add_argument("--open-loop", action="store_true",
+                    help="disable map containment (controlled comparison only)")
+    ap.add_argument("--no-pause", action="store_true",
+                    help="do not pause for repositioning between takes")
     args = ap.parse_args()
 
     if args.list or not args.takes:
@@ -227,13 +241,24 @@ def main() -> None:
     plan = [t for t in selected for _ in range(args.repeat)]
     print(f"{len(plan)} run(s) into {os.path.expanduser(args.out)}")
     failures = []
+    attempted = 0
+    completed = 0
     for i, take in enumerate(plan, 1):
-        if run_one(take, args, i, len(plan)) != 0:
+        if i > 1 and not args.no_pause:
+            answer = input(
+                f"\nposition the stopped car for {take}; press Enter when "
+                "clear, or q to finish: ").strip().lower()
+            if answer == "q":
+                break
+        attempted += 1
+        if run_one(take, args, i, len(plan)) == 0:
+            completed += 1
+        else:
             failures.append(take)
             if input("  continue with the rest? [y/N] ").strip().lower() != "y":
                 break
 
-    print(f"\ndone: {len(plan) - len(failures)}/{len(plan)} complete")
+    print(f"\ndone: {completed}/{attempted} attempted, {len(plan)} planned")
     if failures:
         print("redo: " + ", ".join(failures))
         sys.exit(1)

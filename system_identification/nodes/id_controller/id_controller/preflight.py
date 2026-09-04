@@ -10,10 +10,9 @@ or let ``run_take`` call it for you. Every check here exists because it has
 silently ruined a recording before:
 
 ``drive_exclusive``
-    Exactly one thing may publish ``/drive`` during a take. If the controller or
-    state machine is up it will publish too, the two streams interleave, and the
-    bag looks perfect while being unidentifiable -- the command is then
-    correlated with the state it was reacting to.
+    Exactly one thing may publish ``/drive`` during a take. The containment
+    controller is inside the take player; a second controller would interleave
+    commands and make the applied input ambiguous.
 
 ``teleop_silent``
     Unexpected ``/teleop`` traffic is reported. It cannot override ``/drive``
@@ -50,6 +49,10 @@ BAG_TOPICS = (
     "/commands/motor/speed",
     "/ackermann_cmd_applied",
     "/drive",
+    "/sysid/nominal_cmd",
+    "/sysid/containment_correction",
+    "/sysid/reference_path",
+    "/sysid/safety_map",
     "/teleop",
     "/joy",
 )

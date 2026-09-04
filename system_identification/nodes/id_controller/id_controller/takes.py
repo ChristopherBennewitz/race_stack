@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Open-loop excitation takes for the F1TENTH identification campaign.
+"""Feed-forward excitation takes for the F1TENTH identification campaign.
 
 One take = one recording = one bag. Every take is a fixed table of
-``(steer_cmd [rad], vel_cmd [m/s])`` sampled at ``HZ``; nothing in here reacts
-to the car.
+``(steer_cmd [rad], vel_cmd [m/s])`` sampled at ``HZ``. The player adds a
+separately logged, low-bandwidth containment correction to these commands.
 
 The manifest is split in two because the two sets need different spaces:
 
-``TAKES``     19 takes that fit a 5 x 5 m room -- everything lateral.
-``CORRIDOR``   5 takes that need a 10-12 m straight -- everything longitudinal.
+``TAKES``     19 bounded room takes -- actual fit is checked against ``/map``.
+``CORRIDOR``   5 takes that need a long straight -- everything longitudinal.
 
 Standalone use (no ROS needed, only numpy)::
 
@@ -121,7 +121,7 @@ def m7(bias: float = 0.17, amp: float = 0.17, half: float = 0.15, v: float = 1.1
 
 
 # ---------------------------------------------------------------------------
-# CORRIDOR TAKES: a 10-12 m straight run, which the 5x5 room cannot provide.
+# CORRIDOR TAKES: a long straight run that a small room cannot provide.
 #
 # This is where the longitudinal parameters live. In the box the car never passes
 # 2.4 m/s because it has to stop again; a 10 m straight reaches 3.0 and a 12 m
@@ -223,6 +223,17 @@ def build(name: str) -> np.ndarray:
     return cmds
 
 
+def reference_steering(name: str, commands: np.ndarray) -> np.ndarray:
+    """Steering used to form the containment path, excluding fast excitation."""
+    if name == "M4_chirp_on_circle":
+        return np.full(len(commands), 0.24)
+    if name == "M7_doublets_on_circle":
+        return np.full(len(commands), 0.17)
+    if name == "C5_chirp_highband":
+        return np.zeros(len(commands))
+    return np.asarray(commands[:, 0], dtype=float).copy()
+
+
 def validate(name: str, cmds: np.ndarray) -> None:
     """A take that clips against s_max is measuring the hard stop, not what it targets."""
     peak = float(np.abs(cmds[:, 0]).max())
@@ -280,7 +291,7 @@ def main() -> None:
     for name in manifest:
         print(_summary(name))
         total += len(build(name)) / HZ
-    label = "corridor" if args.corridor else "5 x 5 m room"
+    label = "corridor" if args.corridor else "mapped room"
     print(f"\n{len(manifest)} takes, {total:.0f} s of driving ({label})")
 
 

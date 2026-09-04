@@ -1,29 +1,30 @@
 #!/usr/bin/env python3
-"""Play one open-loop excitation take and stop. Nothing here reacts to the car.
+"""Play a feed-forward excitation with loose map-frame containment.
 
-    ros2 run id_controller play_take --ros-args -p take:=M2_skidpad_L
-    ros2 run id_controller play_take --ros-args -p csv:=/path/to/M2_skidpad_L.csv
-
-Publishes ``ackermann_msgs/AckermannDriveStamped`` on ``/drive`` at the take's
-own rate, then publishes zero speed and exits.
-
-Open loop means open loop: no planner or lap logic generates the command. The
-actuation manager remains in the path for physical limits and deadman safety,
-and its applied output is recorded. The only feedback in this node is the abort
-path -- it can stop the car, it can never steer it.
+The identification signal remains feed-forward. A capped, low-bandwidth
+steering correction prevents accumulated pose drift, while an occupancy-map
+safety layer slows or stops before the car footprint reaches unknown/occupied
+space. The nominal command, correction, requested command, and manager-applied
+command are separate bag topics.
 
 Exit codes: 0 completed, 2 bad arguments, 3 aborted.
 """
 from __future__ import annotations
 
+import math
 import time
 
+import numpy as np
 import rclpy
 from ackermann_msgs.msg import AckermannDriveStamped
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from rclpy.node import Node
-from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.qos import (DurabilityPolicy, HistoryPolicy, QoSProfile,
+                       ReliabilityPolicy)
 from sensor_msgs.msg import Joy
 
+from id_controller import containment
 from id_controller import takes as takes_lib
 
 EXIT_OK = 0
@@ -32,12 +33,17 @@ EXIT_ABORT = 3
 
 
 class TakePlayer(Node):
+    """Publish one identification take with loose containment and hard safety."""
+
     def __init__(self) -> None:
         super().__init__("take_player")
         self.declare_parameter("take", "")
         self.declare_parameter("csv", "")
         self.declare_parameter("topic", "/drive")
+        self.declare_parameter("pose_topic", "/car_state/odom")
+        self.declare_parameter("map_topic", "/sysid/safety_map")
         self.declare_parameter("frame_id", "base_link")
+        self.declare_parameter("map_frame", "map")
         self.declare_parameter("rate_hz", float(takes_lib.HZ))
         self.declare_parameter("countdown", 3.0)
         self.declare_parameter("tail_sec", 1.0)
@@ -45,13 +51,16 @@ class TakePlayer(Node):
         self.declare_parameter("deadman_button", 5)
         self.declare_parameter("human_deadman_button", 4)
         self.declare_parameter("dry_run", False)
+        self.declare_parameter("containment_enabled", True)
+        self.declare_parameter("wheelbase", takes_lib.L)
+        for name, value in containment.DEFAULT_PARAMETERS.items():
+            self.declare_parameter(name, value)
 
-        take = self.get_parameter("take").value
-        csv_path = self.get_parameter("csv").value
+        take = str(self.get_parameter("take").value)
+        csv_path = str(self.get_parameter("csv").value)
         if bool(take) == bool(csv_path):
             self.get_logger().error("set exactly one of 'take' or 'csv'")
             raise SystemExit(EXIT_ARGS)
-
         try:
             self.rows = (takes_lib.build(take) if take
                          else takes_lib.load_csv(csv_path))
@@ -60,26 +69,79 @@ class TakePlayer(Node):
             raise SystemExit(EXIT_ARGS)
 
         self.name = take or csv_path
+        self.reference_steer = (takes_lib.reference_steering(take, self.rows)
+                               if take else self.rows[:, 0].copy())
         self.hz = float(self.get_parameter("rate_hz").value)
-        self.frame = self.get_parameter("frame_id").value
+        self.dt = 1.0 / self.hz
+        self.frame = str(self.get_parameter("frame_id").value)
+        self.map_frame = str(self.get_parameter("map_frame").value)
         self.dry_run = bool(self.get_parameter("dry_run").value)
+        self.containment_enabled = bool(
+            self.get_parameter("containment_enabled").value)
         self.require_deadman = bool(self.get_parameter("require_deadman").value)
         self.deadman_button = int(self.get_parameter("deadman_button").value)
         self.human_deadman_button = int(
             self.get_parameter("human_deadman_button").value)
+        self.wheelbase = float(self.get_parameter("wheelbase").value)
+        self.pose_timeout = float(self.get_parameter("pose_timeout_sec").value)
+        self.jump_distance = float(self.get_parameter("jump_distance").value)
+        self.jump_yaw = float(self.get_parameter("jump_yaw").value)
+        self.hard_clearance = float(self.get_parameter("hard_clearance").value)
+        self.path_clearance = float(self.get_parameter("path_clearance").value)
+        self.slow_clearance = float(self.get_parameter("slow_clearance").value)
+        self.prediction_horizon = float(
+            self.get_parameter("prediction_horizon").value)
+        self.heading_gain = float(self.get_parameter("heading_gain").value)
+        self.cross_track_gain = float(
+            self.get_parameter("cross_track_gain").value)
+        self.speed_softening = float(
+            self.get_parameter("speed_softening").value)
+        self.correction_max = float(self.get_parameter("correction_max").value)
+        self.correction_tau = float(self.get_parameter("correction_tau").value)
+        self.correction_rate = float(self.get_parameter("correction_rate").value)
+        self.max_cross_track_error = float(
+            self.get_parameter("max_cross_track_error").value)
+        self.max_heading_error = float(
+            self.get_parameter("max_heading_error").value)
+        if not (0.0 < self.hard_clearance < self.path_clearance
+                < self.slow_clearance):
+            self.get_logger().error(
+                "need 0 < hard_clearance < path_clearance < slow_clearance")
+            raise SystemExit(EXIT_ARGS)
 
-        # Reliable, small depth: these are commands, and a late one is worse than
-        # a dropped one.
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE,
                          history=HistoryPolicy.KEEP_LAST)
+        map_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                             durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        path_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.pub = self.create_publisher(
             AckermannDriveStamped, self.get_parameter("topic").value, qos)
-
-        # Abort path only. Never touches the commanded values.
-        self.deadman_ok = not self.require_deadman
-        self.abort_reason = ""
+        self.nominal_pub = self.create_publisher(
+            AckermannDriveStamped, "/sysid/nominal_cmd", qos)
+        self.correction_pub = self.create_publisher(
+            AckermannDriveStamped, "/sysid/containment_correction", qos)
+        self.path_pub = self.create_publisher(Path, "/sysid/reference_path", path_qos)
         self.create_subscription(Joy, "/joy", self._joy_cb, 10)
+        self.create_subscription(
+            Odometry, self.get_parameter("pose_topic").value, self._pose_cb, 20)
+        self.create_subscription(
+            OccupancyGrid, self.get_parameter("map_topic").value,
+            self._map_cb, map_qos)
 
+        self.deadman_held = False
+        self.deadman_ok = not self.require_deadman
+        self.deadman_armed = not self.require_deadman
+        self.accept_deadman = False
+        self.abort_reason = ""
+        self.pose = None
+        self.pose_received = None
+        self.previous_pose = None
+        self.map_field = None
+        self.map_error = ""
+        self.reference_path = None
+        self.feedback = 0.0
+        self.last_safety_scale = 1.0
         self.i = 0
         self.tail = 0
         self.n_tail = int(round(float(self.get_parameter("tail_sec").value) * self.hz))
@@ -88,26 +150,32 @@ class TakePlayer(Node):
         self.t_start = None
         self.t_end = None
 
-        dur = len(self.rows) / self.hz
+        duration = len(self.rows) / self.hz
+        mode = "contained" if self.containment_enabled else "OPEN-LOOP OVERRIDE"
         self.get_logger().info(
-            f"{self.name}: {len(self.rows)} rows, {dur:.1f} s at {self.hz:.0f} Hz"
+            f"{self.name}: {len(self.rows)} rows, {duration:.1f} s at "
+            f"{self.hz:.0f} Hz [{mode}]"
             + (" [DRY RUN, publishing nothing]" if self.dry_run else ""))
 
-        countdown = float(self.get_parameter("countdown").value)
-        if self.require_deadman:
+        # Publish and validate the path before arming. This gives the operator
+        # unlimited time to inspect the blue path in RViz while the car cannot
+        # receive the identification command.
+        if self.containment_enabled:
+            self._prepare_containment()
+        if self.require_deadman and not self.aborted:
             self.get_logger().info(
                 f"hold joystick button {self.deadman_button} for the whole take; "
                 "releasing it aborts")
             self._wait_for_deadman()
-        self.get_logger().info(f"starting in {countdown:.0f} s -- clear the area")
-        self._sleep_spinning(countdown)
+        countdown = float(self.get_parameter("countdown").value)
+        if not self.aborted:
+            self.get_logger().info(f"starting in {countdown:.0f} s -- clear the area")
+            self._sleep_spinning(countdown)
         if self.aborted:
             self.done = True
             return
         self.t_start = time.monotonic()
-        self.timer = self.create_timer(1.0 / self.hz, self.tick)
-
-    # --- abort path -----------------------------------------------------------
+        self.timer = self.create_timer(self.dt, self.tick)
 
     def _joy_cb(self, msg: Joy) -> None:
         held = (len(msg.buttons) > self.deadman_button
@@ -115,12 +183,56 @@ class TakePlayer(Node):
         human_held = (len(msg.buttons) > self.human_deadman_button
                       and msg.buttons[self.human_deadman_button] == 1)
         if self.require_deadman and human_held:
-            self._abort(
-                f"human deadman button {self.human_deadman_button} pressed")
+            self._abort(f"human deadman button {self.human_deadman_button} pressed")
             return
-        if self.require_deadman and self.deadman_ok and not held:
+        self.deadman_held = held
+        if self.require_deadman and self.deadman_armed and not held:
             self._abort(f"deadman button {self.deadman_button} released")
-        self.deadman_ok = held or not self.require_deadman
+        if self.require_deadman and self.accept_deadman and held:
+            self.deadman_ok = True
+            self.deadman_armed = True
+
+    def _pose_cb(self, msg: Odometry) -> None:
+        if msg.header.frame_id and msg.header.frame_id != self.map_frame:
+            self.map_error = (f"pose frame is {msg.header.frame_id!r}, expected "
+                              f"{self.map_frame!r}")
+            return
+        q = msg.pose.pose.orientation
+        current = (float(msg.pose.pose.position.x),
+                   float(msg.pose.pose.position.y),
+                   containment.yaw_from_quaternion(q.x, q.y, q.z, q.w),
+                   float(msg.twist.twist.linear.x),
+                   float(msg.twist.twist.linear.y),
+                   float(msg.twist.twist.angular.z))
+        if self.previous_pose is not None and self.t_start is not None:
+            distance = math.hypot(current[0] - self.previous_pose[0],
+                                  current[1] - self.previous_pose[1])
+            yaw_jump = abs(containment.wrap_angle(current[2] - self.previous_pose[2]))
+            if distance > self.jump_distance or yaw_jump > self.jump_yaw:
+                self._abort(
+                    f"localization jump: {distance:.2f} m, {yaw_jump:.2f} rad")
+        self.previous_pose = current
+        self.pose = current
+        self.pose_received = time.monotonic()
+
+    def _map_cb(self, msg: OccupancyGrid) -> None:
+        # Localization uses a saved static map. Building the distance field is
+        # intentionally a one-time pre-take operation; repeating Dijkstra in a
+        # control callback would add command latency whenever /map republishes.
+        if self.map_field is not None:
+            return
+        if msg.header.frame_id and msg.header.frame_id != self.map_frame:
+            self.map_error = (f"map frame is {msg.header.frame_id!r}, expected "
+                              f"{self.map_frame!r}")
+            return
+        q = msg.info.origin.orientation
+        try:
+            self.map_field = containment.DistanceField.from_grid(
+                msg.data, msg.info.width, msg.info.height, msg.info.resolution,
+                msg.info.origin.position.x, msg.info.origin.position.y,
+                containment.yaw_from_quaternion(q.x, q.y, q.z, q.w))
+        except (ValueError, IndexError) as exc:
+            self.map_error = f"invalid occupancy map: {exc}"
 
     def _abort(self, reason: str) -> None:
         if self.aborted:
@@ -131,7 +243,15 @@ class TakePlayer(Node):
         self.get_logger().error(f"ABORT: {reason}")
 
     def _wait_for_deadman(self) -> None:
-        self.get_logger().info("waiting for deadman...")
+        if self.deadman_held:
+            self.get_logger().info(
+                f"release button {self.deadman_button}, inspect the blue path, "
+                "then press it again to arm")
+        while rclpy.ok() and self.deadman_held and not self.aborted:
+            rclpy.spin_once(self, timeout_sec=0.1)
+        self.accept_deadman = True
+        self.get_logger().info(
+            f"path ready; press button {self.deadman_button} to arm")
         while rclpy.ok() and not self.deadman_ok and not self.aborted:
             rclpy.spin_once(self, timeout_sec=0.1)
 
@@ -140,9 +260,50 @@ class TakePlayer(Node):
         while rclpy.ok() and not self.aborted and time.monotonic() < end:
             rclpy.spin_once(self, timeout_sec=0.05)
 
-    # --- playback -------------------------------------------------------------
+    def _prepare_containment(self) -> None:
+        timeout = float(self.get_parameter("localization_wait_sec").value)
+        self.get_logger().info("waiting for map-frame pose and occupancy map...")
+        end = time.monotonic() + timeout
+        while (rclpy.ok() and not self.aborted and not self.map_error
+               and time.monotonic() < end
+               and (self.pose is None or self.map_field is None)):
+            rclpy.spin_once(self, timeout_sec=0.1)
+        if self.map_error:
+            self._abort(self.map_error)
+            return
+        if self.pose is None or self.map_field is None:
+            missing = "pose" if self.pose is None else "occupancy map"
+            self._abort(f"no {missing} after {timeout:.1f} s")
+            return
+        local_path = containment.integrate_reference(
+            self.rows, self.reference_steer, self.dt, self.wheelbase)
+        self.reference_path = containment.transform_path(
+            local_path, self.pose[0], self.pose[1], self.pose[2])
+        minimum = self.map_field.path_clearance(self.reference_path)
+        self._publish_reference_path()
+        if minimum < self.path_clearance:
+            self._abort(
+                f"reference path has only {minimum:.2f} m map clearance; need "
+                f"{self.path_clearance:.2f} m -- reposition or rotate the car")
+            return
+        self.get_logger().info(
+            f"reference path accepted; minimum map clearance {minimum:.2f} m")
 
-    def send(self, steer: float, speed: float) -> None:
+    def _publish_reference_path(self) -> None:
+        msg = Path()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.map_frame
+        for x, y, yaw in self.reference_path:
+            pose = PoseStamped()
+            pose.header = msg.header
+            pose.pose.position.x = float(x)
+            pose.pose.position.y = float(y)
+            pose.pose.orientation.z = math.sin(0.5 * yaw)
+            pose.pose.orientation.w = math.cos(0.5 * yaw)
+            msg.poses.append(pose)
+        self.path_pub.publish(msg)
+
+    def _publish_ackermann(self, publisher, steer: float, speed: float) -> None:
         if self.dry_run:
             return
         msg = AckermannDriveStamped()
@@ -150,24 +311,99 @@ class TakePlayer(Node):
         msg.header.frame_id = self.frame
         msg.drive.steering_angle = float(steer)
         msg.drive.speed = float(speed)
-        self.pub.publish(msg)
+        publisher.publish(msg)
+
+    def send(self, steer: float, speed: float) -> None:
+        self._publish_ackermann(self.pub, steer, speed)
+
+    def _contained_command(self, nominal_steer: float,
+                           nominal_speed: float) -> tuple[float, float, float, float]:
+        if self.pose is None or self.pose_received is None:
+            self._abort("localization disappeared")
+            return nominal_steer, 0.0, 0.0, 0.0
+        age = time.monotonic() - self.pose_received
+        if age > self.pose_timeout:
+            self._abort(f"localization stale for {age:.2f} s")
+            return nominal_steer, 0.0, 0.0, 0.0
+        x, y, yaw, measured_speed, lateral_speed, yaw_rate = self.pose
+        current_clearance = self.map_field.clearance(x, y)
+        if current_clearance < self.hard_clearance:
+            self._abort(
+                f"car centre clearance {current_clearance:.2f} m below hard "
+                f"limit {self.hard_clearance:.2f} m")
+            return nominal_steer, 0.0, 0.0, current_clearance
+
+        cross_track, heading_error, _ = containment.tracking_errors(
+            self.reference_path, x, y, yaw, min(self.i, len(self.rows) - 1), self.hz)
+        if (abs(cross_track) > self.max_cross_track_error
+                or abs(heading_error) > self.max_heading_error):
+            self._abort(
+                f"lost reference path: cross-track {cross_track:.2f} m, "
+                f"heading error {heading_error:.2f} rad")
+            return nominal_steer, 0.0, 0.0, current_clearance
+        tracking_speed = (measured_speed if abs(measured_speed) > 0.10
+                          else nominal_speed)
+        raw = containment.steering_correction(
+            cross_track, heading_error, tracking_speed,
+            self.heading_gain, self.cross_track_gain, self.speed_softening)
+        raw = float(np.clip(raw, -self.correction_max, self.correction_max))
+        alpha = self.dt / (self.correction_tau + self.dt)
+        target = self.feedback + alpha * (raw - self.feedback)
+        max_step = self.correction_rate * self.dt
+        self.feedback += float(np.clip(target - self.feedback, -max_step, max_step))
+        steer = float(np.clip(nominal_steer + self.feedback,
+                              -takes_lib.S_MAX, takes_lib.S_MAX))
+
+        predicted_speed = (measured_speed if abs(measured_speed) > abs(nominal_speed)
+                           else nominal_speed)
+        commanded_clearance = containment.predicted_clearance(
+            self.map_field, x, y, yaw, predicted_speed, steer,
+            self.prediction_horizon, self.wheelbase)
+        measured_clearance = containment.predicted_twist_clearance(
+            self.map_field, x, y, yaw, measured_speed, lateral_speed,
+            yaw_rate, self.prediction_horizon)
+        clearance = min(commanded_clearance, measured_clearance)
+        scale = float(np.clip(
+            (clearance - self.hard_clearance)
+            / (self.slow_clearance - self.hard_clearance), 0.0, 1.0))
+        speed = nominal_speed * scale
+        if scale < 0.999 and (self.last_safety_scale >= 0.999
+                              or abs(scale - self.last_safety_scale) > 0.15):
+            self.get_logger().warn(
+                f"boundary speed scale {scale:.2f}; predicted clearance "
+                f"{clearance:.2f} m", throttle_duration_sec=0.5)
+        self.last_safety_scale = scale
+        return steer, speed, steer - nominal_steer, clearance
 
     def tick(self) -> None:
         if self.aborted:
             return
         if self.i < len(self.rows):
-            steer, speed = self.rows[self.i]
+            nominal_steer, nominal_speed = self.rows[self.i]
+            steer, speed, correction, clearance = (
+                self._contained_command(nominal_steer, nominal_speed)
+                if self.containment_enabled
+                else (nominal_steer, nominal_speed, 0.0, math.inf))
+            if self.aborted:
+                return
+            self._publish_ackermann(
+                self.nominal_pub, nominal_steer, nominal_speed)
+            self._publish_ackermann(
+                self.correction_pub, correction, speed - nominal_speed)
             self.send(steer, speed)
             self.i += 1
-            if self.i % int(self.hz) == 0:
+            if self.i % max(1, int(self.hz)) == 0:
+                clearance_text = (f"  clear={clearance:.2f}m"
+                                  if math.isfinite(clearance) else "")
                 self.get_logger().info(
-                    f"  t={self.i / self.hz:5.1f}s  steer={steer:+.3f}  v={speed:.2f}",
-                    throttle_duration_sec=0.9)
+                    f"t={self.i / self.hz:5.1f}s  nominal=({nominal_steer:+.3f},"
+                    f" {nominal_speed:.2f})  correction={correction:+.3f}  "
+                    f"requested=({steer:+.3f}, {speed:.2f})"
+                    f"{clearance_text}", throttle_duration_sec=0.9)
             return
-        # Hold the last steering angle but command zero speed, so the car coasts
-        # to a stop without a steering step in the tail of the recording.
         if self.tail < self.n_tail:
-            self.send(self.rows[-1][0], 0.0)
+            self.send(float(np.clip(self.rows[-1][0] + self.feedback,
+                                    -takes_lib.S_MAX, takes_lib.S_MAX)), 0.0)
             self.tail += 1
             return
         self.t_end = time.monotonic()
@@ -205,9 +441,6 @@ def main() -> None:
         code = EXIT_ABORT
     finally:
         if node is not None:
-            # Whatever happened -- finished, Ctrl-C, abort, exception -- request
-            # a stop several times. The actuation-manager and VESC watchdogs are
-            # independent fallbacks if these messages do not arrive.
             for _ in range(5):
                 node.send(0.0, 0.0)
                 time.sleep(0.02)
