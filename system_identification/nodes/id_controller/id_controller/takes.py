@@ -214,14 +214,15 @@ ALL = {**TAKES, **CORRIDOR}
 
 
 def has_phase_independent_reference(name: str) -> bool:
-    """Whether a named take follows closed circular geometry.
+    """Whether a named take follows closed repeated geometry.
 
     Progress around these paths depends on the steering response being measured,
-    so it must not be inferred from elapsed time. The figure-eight is excluded:
-    its crossing still needs the time-local association.
+    so it must not be inferred from elapsed time. The figure-eight's two branches
+    meet tangentially, making their heading identical at the crossing.
     """
     return (name.startswith(("M1_circle_", "M2_skidpad_", "M5_speed_steps_"))
-            or name in {"M4_chirp_on_circle", "M7_doublets_on_circle"})
+            or name in {"M3_figure_eight", "M4_chirp_on_circle",
+                        "M7_doublets_on_circle"})
 
 
 def completes_at_radial_limit(name: str) -> bool:

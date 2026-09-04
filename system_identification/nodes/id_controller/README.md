@@ -140,8 +140,9 @@ again, so you have time to inspect it while the command is still disarmed.
 During the take, a Stanley-like steering correction is low-pass filtered,
 rate-limited, and capped at 0.10 rad. Fast chirps and doublets are deliberately
 excluded from the reference geometry, so the feedback does not chase them.
-Closed circular references are matched by position rather than elapsed-time
-phase because their angular progress is one of the unknown vehicle responses.
+Closed circle and figure-eight references are matched by position rather than
+elapsed-time phase because their angular progress is one of the unknown vehicle
+responses.
 The M2 skidpad records some radial departure from its nominal circle, then ends
 successfully at the 0.75 m cross-track limit: pushing wide is the intended
 saturation signal. Heading loss and the live map-clearance checks remain aborts.
