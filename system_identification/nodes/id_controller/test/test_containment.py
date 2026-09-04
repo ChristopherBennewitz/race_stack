@@ -5,6 +5,15 @@ import numpy as np
 from id_controller import containment
 
 
+def test_default_feedback_is_firm_but_keeps_bounded_authority():
+    defaults = containment.DEFAULT_PARAMETERS
+    assert defaults["heading_gain"] == 0.50
+    assert defaults["cross_track_gain"] == 0.55
+    assert defaults["correction_tau"] == 0.35
+    assert defaults["correction_rate"] == 0.35
+    assert defaults["correction_max"] == 0.15
+
+
 def test_straight_reference_integrates_forward_and_reverse():
     commands = np.array([[0.0, 1.0]] * 11)
     forward = containment.integrate_reference(

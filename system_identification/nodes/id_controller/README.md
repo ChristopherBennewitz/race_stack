@@ -137,9 +137,10 @@ the blue path fits in RViz, then start the take again. For an accepted path the
 player publishes it first and requires button 5 to be released and pressed
 again, so you have time to inspect it while the command is still disarmed.
 
-During the take, a Stanley-like steering correction is low-pass filtered,
-rate-limited, and capped at 0.10 rad. Fast chirps and doublets are deliberately
-excluded from the reference geometry, so the feedback does not chase them.
+During the take, a Stanley-like steering correction is low-pass filtered with a
+0.35 s time constant, rate-limited to 0.35 rad/s, and capped at 0.15 rad. Fast
+chirps and doublets are deliberately excluded from the reference geometry, so
+the feedback does not chase them.
 Closed circle and figure-eight references are matched by position rather than
 elapsed-time phase because their angular progress is one of the unknown vehicle
 responses.

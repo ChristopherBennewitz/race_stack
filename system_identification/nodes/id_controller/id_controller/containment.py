@@ -19,12 +19,12 @@ DEFAULT_PARAMETERS = {
     "path_clearance": 0.42,
     "slow_clearance": 0.75,
     "prediction_horizon": 0.80,
-    "heading_gain": 0.35,
-    "cross_track_gain": 0.35,
+    "heading_gain": 0.50,
+    "cross_track_gain": 0.55,
     "speed_softening": 0.60,
-    "correction_max": 0.10,
-    "correction_tau": 0.60,
-    "correction_rate": 0.20,
+    "correction_max": 0.15,
+    "correction_tau": 0.35,
+    "correction_rate": 0.35,
 }
 
 
