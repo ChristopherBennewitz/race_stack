@@ -76,6 +76,7 @@ you to release and press it again to arm the take.
 | Command | What it does |
 |---|---|
 | `run_take` | preflight + record + play + metadata; the one you want |
+| `record_teleop` | record one manually driven take while button 4 is held |
 | `play_take` | just plays a take to `/drive`; use when you run the bag yourself |
 | `preflight` | just the command-path checks |
 | `takes` | manifest and CSV export, no ROS needed |
@@ -83,9 +84,19 @@ you to release and press it again to arm the take.
 ```bash
 ros2 run id_controller play_take --ros-args -p take:=M1_circle_0.20_L
 ros2 run id_controller play_take --ros-args -p csv:=/path/to/take.csv
+ros2 run id_controller record_teleop slaloms
 ros2 run id_controller preflight
 python3 -m id_controller.takes --csv out/
 ```
+
+`record_teleop` first requires button 4 to be released, starts and settles the
+bag recorder, then asks you to press and hold button 4. Drive the maneuver and
+release button 4 to command the car to stop; recording continues for a one-second
+tail before the bag is closed. Finally, answer the keep/discard prompt. This is
+manual driving with no path containment, so the driver remains responsible for
+staying inside the available space. The bag includes `/teleop`, `/joy`, and the
+actual limited plant input on `/ackermann_cmd_applied`, plus the same state and
+sensor topics as scripted takes.
 
 Useful `run_take` flags: `--repeat N`, `--rate HZ`, `--no-bag`, `--dry-run`
 (runs the timing loop and publishes nothing), `--no-deadman` (bench only),

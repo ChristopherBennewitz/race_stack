@@ -27,6 +27,7 @@ setup(
     entry_points={
         'console_scripts': [
             'run_take = id_controller.run_take:main',
+            'record_teleop = id_controller.record_teleop:main',
             'play_take = id_controller.play_take:main',
             'preflight = id_controller.preflight:main',
             'takes = id_controller.takes:main',
