@@ -26,7 +26,7 @@ import numpy as np
 
 HZ = 40
 DT = 1.0 / HZ
-L = 0.32                      # measured wheelbase, m
+L = 0.321                     # measured wheelbase, m
 
 # Conservative symmetric limit inside NUC2's calibrated [-0.346, +0.353] rad
 # range.  Keeping generated takes inside it avoids asymmetric manager clipping.
