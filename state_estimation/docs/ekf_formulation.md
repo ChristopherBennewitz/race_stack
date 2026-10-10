@@ -273,5 +273,7 @@ predict or update until `is_initialized` is set.
 
 Published state is $[\hat x_0,\hat x_1,\hat x_2,\hat x_3,\hat x_4,\hat x_5]$
 (steering states $\hat x_6,\hat x_7$ are internal only) as `nav_msgs/Odometry` on
-`/early_fusion/odom` plus an `odom → base_link` TF, at the filter's own rate
-(i.e. only on ticks that actually ran a predict).
+`/early_fusion/odom` at the filter's own rate (i.e. only on ticks that actually ran a
+predict). The `odom → base_link` TF is off by default (`publish_tf`): Cartographer
+publishes `map → base_link` and a static `map → odom` exists, so a second parent for
+`base_link` would make the SLAM pose jump.

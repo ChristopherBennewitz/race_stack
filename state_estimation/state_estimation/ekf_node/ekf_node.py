@@ -48,6 +48,9 @@ class EkfNode(Node):
             ('front_drive_frac', 0.5), ('constraint_time_constant', 0.03),
             ('blend_center', 0.6), ('slip_speed_regularizer', 0.1),
             ('imu_accel_alpha', 0.2),
+            # Off by default: Cartographer publishes map->base_link and a static map->odom exists, so an
+            # odom->base_link broadcast would give base_link two parents and make the SLAM pose jump.
+            ('publish_tf', False),
             # Nominal values from f1tenth_parallel_sim/configs/f1tenth_car.toml.
             ('mass', 3.718), ('yaw_inertia', 0.0561),
             ('front_axle_distance', 0.17334), ('rear_axle_distance', 0.14766),
@@ -67,7 +70,8 @@ class EkfNode(Node):
         self.declare_parameter('Q', [4.9e-5, 3.6e-5, 3.6e-5, 5.8e-4, 1.8e-3, 6.7e-2, 2.3e-5, 6.9e-3])
 
         self.Hz = self.get_parameter('frequency').value
-        self.tf_broadcaster = TransformBroadcaster(self)
+        self.publish_tf = self.get_parameter('publish_tf').value
+        self.tf_broadcaster = TransformBroadcaster(self) if self.publish_tf else None
 
         # Get covariance matrices
         self.R_imu = np.diag(self.get_parameter('R_imu').value)
@@ -227,6 +231,9 @@ class EkfNode(Node):
         odom.twist.covariance = twist_cov.flatten().tolist()
 
         self.odom_pub.publish(odom)
+
+        if not self.publish_tf:
+            return
 
         t = TransformStamped()
         t.header.stamp = odom.header.stamp
