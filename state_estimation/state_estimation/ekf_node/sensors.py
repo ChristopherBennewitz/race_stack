@@ -107,6 +107,12 @@ class ImuSensor(Sensor):
     """
     IMU sensor. Measurement: [yaw, yaw_rate, ax, ay].
 
+    Yaw is relative to the first orientation reading, so the odom frame starts with its x axis along
+    the car's initial heading (as robot_localization's ``imu0_relative`` did). The IMU's absolute yaw
+    is in its own, mounted-rotated frame and would not match the odometry frame. The gyro rate is
+    unaffected by a pure yaw mounting rotation. The accelerations are used as published (their weight
+    in the filter is negligible) and are not rotated into the base frame.
+
     Applies an exponential moving average to the linear accelerations and can
     initialise the filter state from the first orientation reading.
 
@@ -123,6 +129,7 @@ class ImuSensor(Sensor):
         self.alpha = alpha
         self.prev_ax = None
         self.prev_ay = None
+        self.yaw0 = None
         self._initialized = False
 
     def parse(self, msg):
@@ -144,7 +151,10 @@ class ImuSensor(Sensor):
         q = [msg.orientation.x, msg.orientation.y,
              msg.orientation.z, msg.orientation.w]
         __, __, yaw = tft.euler_from_quaternion(q)
-        self.data[0] = normalize_angle(yaw)
+        yaw = normalize_angle(yaw)
+        if self.yaw0 is None:
+            self.yaw0 = yaw
+        self.data[0] = normalize_angle(yaw - self.yaw0)
 
         if not self._initialized and self.on_init is not None:
             self.on_init(self.data)

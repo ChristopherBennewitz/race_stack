@@ -66,7 +66,9 @@ class EkfNode(Node):
         # (rate error variance x nominal dt); x/y/yaw have no parameter dependence and use the sysid
         # pose sigmas (0.007, 0.006, 0.006).
         self.declare_parameter('R_imu', [0.1, 0.0009, 1000000.0, 1000000.0])
-        self.declare_parameter('R_vesc', [1.0, 1.0, 1.0, 0.04, 100.0, 0.1])
+        # VESC pose is not fused (huge R): its x/y/yaw are dead-reckoned in a frame with an arbitrary yaw
+        # origin, which would fight the IMU heading. Only its vx, vy and yaw rate are used.
+        self.declare_parameter('R_vesc', [1000000.0, 1000000.0, 1000000.0, 0.04, 100.0, 0.1])
         self.declare_parameter('Q', [4.9e-5, 3.6e-5, 3.6e-5, 5.8e-4, 1.8e-3, 6.7e-2, 2.3e-5, 6.9e-3])
 
         self.Hz = self.get_parameter('frequency').value

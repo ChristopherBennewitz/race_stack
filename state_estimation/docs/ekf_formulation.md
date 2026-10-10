@@ -188,8 +188,8 @@ entry is large because the rear tire stiffness/shape parameters are poorly
 determined. The fit's residuals were 9.4x the assumed noise, so these values
 are, if anything, optimistic. The default $R$ takes the sysid gyro yaw-rate
 variance ($0.03^2$) for the IMU and the odometry speed variance ($0.2^2$) for
-$v_x$; the other entries are unchanged (the sysid pose sigmas describe SLAM,
-not VESC odometry).
+$v_x$. The VESC pose entries are set huge (see §5) and the remaining entries are
+unchanged (the sysid pose sigmas describe SLAM, not VESC odometry).
 
 ## 5. Measurement models
 
@@ -214,7 +214,11 @@ $$
 The acceleration variance is deliberately enormous: $a_x,a_y$ contribute
 negligible correction weight and exist as a held-out consistency channel
 (see `ekf_compare_launch.py`/`ekf_benchmark_node.py`), not a correction
-source. The first IMU message also seeds the filter:
+source. The yaw measurement $\psi_m$ is the IMU orientation yaw **relative to its first
+sample** (the IMU's absolute yaw is in its own, mounted-rotated frame), so the odom frame
+starts with its $x$ axis along the car's initial heading and matches the VESC odometry
+frame. The accelerations are used as published and not rotated into the base frame (their
+weight is negligible). The first IMU message also seeds the filter:
 $\hat x_2 \leftarrow \psi_m,\ \hat x_5 \leftarrow \omega_m,\ P_{22}\leftarrow R_{\mathrm{imu},00},\ P_{55}\leftarrow R_{\mathrm{imu},11}$;
 the node does not run `predict`/`update` at all before this happens.
 
@@ -230,8 +234,14 @@ i.e. a fixed linear selection of the first six states (the steering states are
 unobserved by this sensor); $H_{\mathrm{vesc}}$ is thus its own Jacobian.
 
 $$
-R_{\mathrm{vesc}} = \operatorname{diag}(\sigma_x^2,\sigma_y^2,\sigma_\psi^2,\sigma_{v_x}^2,\sigma_{v_y}^2,\sigma_\omega^2), \quad \text{default } \operatorname{diag}(1,\,1,\,1,\,0.04,\,100,\,0.1)
+R_{\mathrm{vesc}} = \operatorname{diag}(\sigma_x^2,\sigma_y^2,\sigma_\psi^2,\sigma_{v_x}^2,\sigma_{v_y}^2,\sigma_\omega^2), \quad \text{default } \operatorname{diag}(10^6,\,10^6,\,10^6,\,0.04,\,100,\,0.1)
 $$
+
+The VESC pose entries are deliberately huge, so the pose is **not** fused: the VESC odometry
+integrates $x, y, \psi$ from zero in its own frame, which would fight the IMU heading and the
+filter's own integration of $v_x$ along it. Only $v_x, v_y, \omega$ are used from this sensor.
+The pose comes from integrating velocity along the IMU-derived heading; Cartographer
+corrects it.
 
 ## 6. Sequential update
 

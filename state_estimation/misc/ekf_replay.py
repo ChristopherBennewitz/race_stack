@@ -120,7 +120,8 @@ def replay(bag, speed_bias=0.0, q_scale=1.0):
     ref_vx, ref_vy, ref_wz = reference_velocity(odom)
 
     x = np.zeros(8)
-    x[2], x[5] = imu[np.searchsorted(imu[:, 0], t0), 1:3]
+    yaw0 = imu[np.searchsorted(imu[:, 0], t0), 1]
+    x[2], x[5] = 0.0, imu[np.searchsorted(imu[:, 0], t0), 2]
     P = model.P_0.copy()
     P[2, 2], P[5, 5] = R_IMU[0, 0], R_IMU[1, 1]
     i_imu = i_cmd = i_odom = 0
@@ -138,7 +139,7 @@ def replay(bag, speed_bias=0.0, q_scale=1.0):
             _, yaw, wz, ax, ay = imu[i_imu]
             a = np.array([ax, ay])
             ema = a if ema is None else ACCEL_EMA * a + (1 - ACCEL_EMA) * ema
-            imu_z = np.array([wrap(yaw), wz, *ema])
+            imu_z = np.array([wrap(yaw - yaw0), wz, *ema])
             i_imu += 1
             imu_fresh = True
         odom_fresh = False
