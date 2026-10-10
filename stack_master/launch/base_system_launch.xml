@@ -4,6 +4,7 @@
   <arg name="map_name" default="latest" description="Map name in stack_master/maps" />
   <arg name="sim" default="False" description="True/False if you want to run simulation" />
   <arg name="loc_algorithm" default="slam" description="'slam' / 'synpf' to switch localisation algorithm" />
+  <arg name="frenet" default="True" description="True/False to wait for /global_waypoints and publish /car_state/frenet (False for tracks without a raceline)" />
 
   <!-- Note: This is merely the share path (read-only) as the base_system
     is not expected to modify maps in any way. -->
@@ -30,7 +31,7 @@
       <arg name="racecar_version" value="$(var racecar_version)" />
       <arg name="mapping_bool" value="False" />
       <arg name="map_name" value="$(var map_name)" />
-      <arg name="frenet_bool" value="True" />
+      <arg name="frenet_bool" value="$(var frenet)" />
     </include>
   </group>
 
