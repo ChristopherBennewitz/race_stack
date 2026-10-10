@@ -5,6 +5,11 @@ from glob import glob
 package_name = 'stack_master'
 
 
+def files(pattern):
+    """Glob that keeps regular files only; data_files cannot install directories."""
+    return [path for path in glob(pattern, recursive=True) if os.path.isfile(path)]
+
+
 #handle the maps subfolders
 map_subfolders = []
 for map_dir in os.listdir('maps'):
@@ -21,13 +26,14 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
         (os.path.join('share', package_name, 'launch', 'subsystems'), glob(os.path.join('launch', 'subsystems', '*launch.[pxy][yma]*'))),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
-        (os.path.join('share', package_name, 'config', 'NUC2'), glob(os.path.join('config', 'NUC2', '*/*'), recursive=True)),
+        (os.path.join('share', package_name, 'config', 'NUC2'), files(os.path.join('config', 'NUC2', '*/*'))),
         (os.path.join('share', package_name, 'config', 'NUC2'), glob(os.path.join('config', 'NUC2', '*.yaml'))),
-        (os.path.join('share', package_name, 'config', 'NUC5'), glob(os.path.join('config', 'NUC5', '*/*'), recursive=True)),
+        (os.path.join('share', package_name, 'config', 'NUC5'), files(os.path.join('config', 'NUC5', '*/*'))),
         (os.path.join('share', package_name, 'config', 'NUC5'), glob(os.path.join('config', 'NUC5', '*.yaml'))),
-        (os.path.join('share', package_name, 'config', 'NUC6'), glob(os.path.join('config', 'NUC6', '*/*'), recursive=True)),
+        (os.path.join('share', package_name, 'config', 'NUC5', 'pacejka', 'dubi'), files(os.path.join('config', 'NUC5', 'pacejka', 'dubi', '*'))),
+        (os.path.join('share', package_name, 'config', 'NUC6'), files(os.path.join('config', 'NUC6', '*/*'))),
         (os.path.join('share', package_name, 'config', 'NUC6'), glob(os.path.join('config', 'NUC6', '*.yaml'))),
-        (os.path.join('share', package_name, 'config', 'NUC7'), glob(os.path.join('config', 'NUC7', '*.yaml'))),(os.path.join('share', package_name, 'config', 'NUC7'), glob(os.path.join('config', 'NUC7', '*/*'), recursive=True)),
+        (os.path.join('share', package_name, 'config', 'NUC7'), glob(os.path.join('config', 'NUC7', '*.yaml'))),(os.path.join('share', package_name, 'config', 'NUC7'), files(os.path.join('config', 'NUC7', '*/*'))),
         (os.path.join('share', package_name, 'config', 'NUC7'), glob(os.path.join('config', 'NUC7', '*.yaml'))),
         (os.path.join('share', package_name, 'config', 'SIM'), glob(os.path.join('config', 'SIM', '*.*'))),
         (os.path.join('share', package_name, 'config', 'global_planner'), glob(os.path.join('config', 'global_planner', '*.*'))),
