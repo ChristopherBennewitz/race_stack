@@ -37,13 +37,13 @@ ackermann_to_vesc_node:
 actuation_manager:
   ros__parameters:
     # Limits are in controller-facing units: m/s, m/s^2, radians and rad/s.
-    speed_min: -15.9053308824
-    speed_max: 15.8042279412
+    speed_min: -10.0
+    speed_max: 10.0
     max_acceleration: 5.0
     max_deceleration: 5.0
-    steering_min: -0.3461538462
-    steering_max: 0.3531468531
-    max_steering_rate: 5.0
+    steering_min: -0.30
+    steering_max: 0.30
+    max_steering_rate: 3.0
     output_rate: 100.0
     command_timeout: 0.2
     joy_timeout: 0.2
