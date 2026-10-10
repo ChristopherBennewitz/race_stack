@@ -7,7 +7,7 @@ package_name = 'state_estimation'
 setup(
     name=package_name,
     version='0.0.0',
-    packages=[package_name],
+    packages=[package_name, package_name + '.ekf_node'],
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -23,6 +23,11 @@ setup(
     license='MIT',
     tests_require=['pytest'],
     entry_points={
-        'console_scripts': ['carstate_node = state_estimation.carstate_node:main'],
+        'console_scripts': [
+            'carstate_node = state_estimation.carstate_node:main',
+            'ekf_node = state_estimation.ekf_node.ekf_node:main',
+            'ekf_benchmark_node = state_estimation.ekf_benchmark_node:main',
+            'slam_match_benchmark_node = state_estimation.slam_match_benchmark_node:main',
+        ],
     },
 )

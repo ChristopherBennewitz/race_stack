@@ -9,8 +9,10 @@ controller:
     # acc_scaler_for_steer_safe: 1.2
     # dec_scaler_for_steer_safe: 0.9 
     # acc_scaler_for_steer_aggressive: 1.1
-    acc_scaler_for_steer: 1.2
-    dec_scaler_for_steer: 0.9
+    # Neutral until tuned on this car: the imu subscription was pointing at an unpublished
+    # topic, so these have never run. 1.2 / 0.9 are the upstream values.
+    acc_scaler_for_steer: 1.0
+    dec_scaler_for_steer: 1.0
 
     start_scale_speed: 7.0
     end_scale_speed: 8.0

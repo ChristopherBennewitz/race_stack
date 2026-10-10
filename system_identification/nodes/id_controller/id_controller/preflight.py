@@ -42,8 +42,15 @@ from sensor_msgs.msg import Imu, Joy
 from std_msgs.msg import Float64
 
 #: Topics that must be in every take's bag for command and response reconstruction.
+#: /odom is the raw VESC odometry and /early_fusion/odom the state estimator's output (the
+#: EKF's inputs and result, for replay); /sensors/core is the VESC's measured erpm, current and
+#: voltage; /tf_static carries the IMU mounting.
 BAG_TOPICS = (
     "/car_state/odom",
+    "/odom",
+    "/early_fusion/odom",
+    "/sensors/core",
+    "/tf_static",
     "/sensors/imu/raw",
     "/commands/servo/position",
     "/commands/motor/speed",
@@ -61,6 +68,8 @@ BAG_TOPICS = (
 #: /teleop is required to be silent, so neither belongs here.
 LIVE_TOPICS = {
     "/car_state/odom": Odometry,
+    "/odom": Odometry,
+    "/early_fusion/odom": Odometry,
     "/sensors/imu/raw": Imu,
     "/commands/servo/position": Float64,
     "/commands/motor/speed": Float64,

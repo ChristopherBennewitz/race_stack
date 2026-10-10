@@ -1,36 +1,26 @@
-# Copyright 2018 Open Source Robotics Foundation, Inc.
-# Copyright 2019 Samsung Research America
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""Launch the simulator-model EKF used by the normal state-estimation stack."""
 
 from launch import LaunchDescription
-from ament_index_python.packages import get_package_share_directory
-import launch_ros.actions
-import os
-import yaml
-from launch.substitutions import EnvironmentVariable
-import pathlib
-import launch.actions
 from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
 
 def generate_launch_description():
     return LaunchDescription([
-        launch_ros.actions.Node(
-            package='robot_localization',
-            executable='ekf_node',
-            name='ekf_filter_node',
-            output='screen',
-            parameters=[os.path.join(get_package_share_directory("state_estimation"), 'config', 'ekf.yaml')],
-            remappings=[('/odometry/filtered', '/early_fusion/odom'),]
-           ),
-])
+        DeclareLaunchArgument('odom_topic', default_value='/early_fusion/odom'),
+        DeclareLaunchArgument('vesc_topic', default_value='/odom'),
+        DeclareLaunchArgument('imu_topic', default_value='/sensors/imu/raw'),
+        Node(
+            package='state_estimation', executable='ekf_node', name='ekf_node', output='screen',
+            parameters=[{
+                'odom_topic': LaunchConfiguration('odom_topic'),
+                'vesc_topic': LaunchConfiguration('vesc_topic'),
+                'imu_topic': LaunchConfiguration('imu_topic'),
+                'frequency': 100.0,
+                'R_imu': [0.1, 0.0009, 1e6, 1e6],
+                'R_vesc': [1.0, 1.0, 1.0, 0.04, 100.0, 0.1],
+                'Q': [4.9e-5, 3.6e-5, 3.6e-5, 5.8e-4, 1.8e-3, 6.7e-2, 2.3e-5, 6.9e-3],
+            }],
+        ),
+    ])

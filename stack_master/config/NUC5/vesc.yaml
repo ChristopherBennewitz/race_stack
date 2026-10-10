@@ -40,7 +40,7 @@ actuation_manager:
     steering_min: -0.3271441202
     steering_max: 0.2917771883
     max_steering_rate: 2.4615384615
-    output_rate: 75.0
+    output_rate: 100.0
     command_timeout: 0.2
     joy_timeout: 0.2
     human_deadman_button: 4

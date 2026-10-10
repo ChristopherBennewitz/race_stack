@@ -74,7 +74,7 @@ class TakePlayer(Node):
         self.phase_independent_reference = (
             takes_lib.has_phase_independent_reference(take) if take else False)
         self.reference_steer = (takes_lib.reference_steering(take, self.rows)
-                               if take else self.rows[:, 0].copy())
+                               if take else takes_lib.road_wheel_angle(self.rows[:, 0]))
         self.hz = float(self.get_parameter("rate_hz").value)
         self.dt = 1.0 / self.hz
         self.frame = str(self.get_parameter("frame_id").value)
@@ -381,7 +381,8 @@ class TakePlayer(Node):
         predicted_speed = (measured_speed if abs(measured_speed) > abs(nominal_speed)
                            else nominal_speed)
         commanded_clearance = containment.predicted_clearance(
-            self.map_field, x, y, yaw, predicted_speed, steer,
+            self.map_field, x, y, yaw, predicted_speed,
+            float(takes_lib.road_wheel_angle(steer)),
             self.prediction_horizon, self.wheelbase)
         measured_clearance = containment.predicted_twist_clearance(
             self.map_field, x, y, yaw, measured_speed, lateral_speed,

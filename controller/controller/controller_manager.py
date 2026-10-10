@@ -255,7 +255,7 @@ class Controller(Node):
             self.l1_params = yaml.safe_load(f)
             self.l1_params = self.l1_params['controller']['ros__parameters']
 
-        self.create_subscription(Imu,'/vesc/sensors/imu/raw', self.imu_cb, 10) # acceleration subscriber for steer change
+        self.create_subscription(Imu,'/sensors/imu/raw', self.imu_cb, 10) # acceleration subscriber for steer change
         self.acc_now = np.zeros(10) # rolling buffer for acceleration
 
         self.map_controller = MAP_Controller(
@@ -304,7 +304,7 @@ class Controller(Node):
                 self.wheelbase = car_params['vesc_to_odom_node']['ros__parameters']['wheelbase']
         
 
-        self.create_subscription(Imu,'/vesc/sensors/imu/raw', self.imu_cb, 10) # acceleration subscriber for steer change
+        self.create_subscription(Imu,'/sensors/imu/raw', self.imu_cb, 10) # acceleration subscriber for steer change
         self.acc_now = np.zeros(10) # rolling buffer for acceleration
 
         self.pp_controller = PP_Controller(

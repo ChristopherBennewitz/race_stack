@@ -26,12 +26,13 @@ def test_no_take_requests_reverse_motion():
 
 
 def test_fast_steering_excitation_is_not_in_containment_reference():
-    for name, expected in (("M4_chirp_on_circle", 0.24),
-                           ("M7_doublets_on_circle", 0.17),
-                           ("C5_chirp_highband", 0.0)):
+    """The reference holds the carrier, in wheel space, and drops the excitation."""
+    for name, carrier in (("M4_chirp_on_circle", 0.24),
+                          ("M7_doublets_on_circle", 0.17),
+                          ("C5_chirp_highband", 0.0)):
         commands = takes.build(name)
         reference = takes.reference_steering(name, commands)
-        assert np.allclose(reference, expected)
+        assert np.allclose(reference, takes.road_wheel_angle(carrier))
 
 
 def test_closed_circle_tracking_policy():

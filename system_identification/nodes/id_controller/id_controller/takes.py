@@ -16,17 +16,20 @@ Standalone use (no ROS needed, only numpy)::
     python3 -m id_controller.takes --list
     python3 -m id_controller.takes --csv out/
 
-Because ``steer_gain`` is not known, every bounded maneuver runs on a circle (a
-held steering command circles at *some* radius regardless of the gain), while
-anything that has to travel in a straight line is budgeted by distance instead.
+Bounded maneuvers run on a circle and are budgeted with the identified
+``STEER_GAIN``; anything that has to travel in a straight line is budgeted by
+distance instead.
 """
 from __future__ import annotations
 
 import numpy as np
 
-HZ = 40
+HZ = 100
 DT = 1.0 / HZ
 L = 0.321                     # measured wheelbase, m
+# Command to road-wheel angle, identified: wheel = STEER_GAIN*u + STEER_CUBIC*u**3.
+STEER_GAIN = 1.71517
+STEER_CUBIC = -2.89492
 
 # Conservative symmetric limit inside NUC2's calibrated [-0.346, +0.353] rad
 # range.  Keeping generated takes inside it avoids asymmetric manager clipping.
@@ -52,9 +55,15 @@ def cat(*parts: np.ndarray) -> np.ndarray:
     return np.concatenate([p for p in parts if len(p)], axis=0)
 
 
-def revolution_seconds(delta: float, v: float, gain: float = 1.0) -> float:
-    """Time for one full turn at the WORST CASE (largest) radius, i.e. lowest gain."""
-    return 2.0 * np.pi * (L / np.tan(gain * delta)) / v
+def road_wheel_angle(command):
+    """Road-wheel angle produced by a steering command, in radians."""
+    command = np.asarray(command, dtype=float)
+    return STEER_GAIN * command + STEER_CUBIC * command ** 3
+
+
+def revolution_seconds(delta: float, v: float) -> float:
+    """Time for one full turn at the radius the command actually produces."""
+    return 2.0 * np.pi * (L / np.tan(abs(float(road_wheel_angle(delta))))) / v
 
 
 # --- M1: kinematic steer_gain, one take per (angle, direction) ------------------
@@ -81,7 +90,7 @@ def m2(delta: float = 0.34, sign: float = 1.0, v0: float = 0.8, v1: float = 3.6,
 M3_DELTA = 0.24               # leaves the full 0.10 rad correction in either direction
 M3_TRANSITION_SPEEDS = (1.0, 1.3, 1.6, 2.0, 1.6, 1.3, 1.0)
 M3_LEAD_SEC = 0.5
-M3_LOBE_TIMEOUT_FACTOR = 2.0
+M3_LOBE_TIMEOUT_FACTOR = 3.0   # headroom for a real gain below STEER_GAIN
 M3_RAMP_START = 0.20          # hold speed around each steering reversal
 M3_RAMP_END = 0.80
 
@@ -317,14 +326,19 @@ def build(name: str) -> np.ndarray:
 
 
 def reference_steering(name: str, commands: np.ndarray) -> np.ndarray:
-    """Steering used to form the containment path, excluding fast excitation."""
+    """Road-wheel angles used to form the containment path, excluding fast excitation.
+
+    Returned in wheel space, not command space: the containment path is integrated through
+    a kinematic bicycle, which needs the angle the wheels reach rather than the one asked
+    for. The two differ by `STEER_GAIN` and are a factor of ~1.7 apart.
+    """
     if name == "M4_chirp_on_circle":
-        return np.full(len(commands), 0.24)
+        return np.full(len(commands), road_wheel_angle(0.24))
     if name == "M7_doublets_on_circle":
-        return np.full(len(commands), 0.17)
+        return np.full(len(commands), road_wheel_angle(0.17))
     if name == "C5_chirp_highband":
         return np.zeros(len(commands))
-    return np.asarray(commands[:, 0], dtype=float).copy()
+    return road_wheel_angle(commands[:, 0])
 
 
 def validate(name: str, cmds: np.ndarray) -> None:

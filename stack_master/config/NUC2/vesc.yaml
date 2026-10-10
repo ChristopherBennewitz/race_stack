@@ -2,7 +2,11 @@
   # general parameters shared by all vesc-related nodes
   ros__parameters:
     # erpm (electrical rpm) = speed_to_erpm_gain * speed (meters / second) + speed_to_erpm_offset
-    speed_to_erpm_gain: 4352.0
+    # Gain measured against SLAM travel on straight runs: 4543. Two derivations (chord
+    # ratio, and a joint fit of gain and rest offset over 0.15-5.0 m/s) bracket it at
+    # 4509-4585; both exclude the old 4352.
+    # The offset is motor deadband on the command path only; see vesc_to_odom_node.
+    speed_to_erpm_gain: 4543.0
     speed_to_erpm_offset: 220.0
 
     # servo value (0 to 1) =  steering_angle_to_servo_gain * steering angle (radians) + steering_angle_to_servo_offset
@@ -40,7 +44,7 @@ actuation_manager:
     steering_min: -0.3461538462
     steering_max: 0.3531468531
     max_steering_rate: 5.0
-    output_rate: 75.0
+    output_rate: 100.0
     command_timeout: 0.2
     joy_timeout: 0.2
     human_deadman_button: 4
@@ -53,6 +57,9 @@ vesc_driver_node:
 
 vesc_to_odom_node:
   ros__parameters:
+    # A stationary motor reports no erpm, so the command-side deadband offset must not be
+    # subtracted from a measurement.
+    speed_to_erpm_offset: 0.0
     odom_frame: odom
     base_frame: base_link
     # publish odom to base link tf

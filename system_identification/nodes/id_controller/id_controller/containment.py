@@ -57,7 +57,10 @@ def yaw_from_quaternion(x: float, y: float, z: float, w: float) -> float:
 
 def integrate_reference(commands: np.ndarray, reference_steer: np.ndarray,
                         dt: float, wheelbase: float) -> np.ndarray:
-    """Integrate a kinematic reference path starting at (0, 0, 0)."""
+    """Integrate a kinematic reference path starting at (0, 0, 0).
+
+    ``reference_steer`` is a road-wheel angle, not a steering command.
+    """
     commands = np.asarray(commands, dtype=float)
     reference_steer = np.asarray(reference_steer, dtype=float)
     if commands.ndim != 2 or commands.shape[1] != 2:
@@ -187,7 +190,10 @@ class DistanceField:
 def predicted_clearance(field: DistanceField, x: float, y: float, yaw: float,
                         speed: float, steer: float, horizon: float,
                         wheelbase: float, step: float = 0.1) -> float:
-    """Return minimum clearance along a constant-input bicycle prediction."""
+    """Return minimum clearance along a constant-input bicycle prediction.
+
+    ``steer`` is a road-wheel angle, not a steering command.
+    """
     result = field.clearance(x, y)
     count = max(1, int(math.ceil(horizon / step)))
     dt = horizon / count

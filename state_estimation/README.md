@@ -7,9 +7,91 @@ The main launcher for the state estimation components can be found in `state_est
 
 ## Kalman Filter ##
 
-The Kalman Filter is implemented using the `robot_localization` package published [here](https://github.com/cra-ros-pkg/robot_localization) [see our paper for reference]. 
+The standard launch now runs `state_estimation/ekf_node`: a `filterpy`
+`ExtendedKalmanFilter` with sequential IMU and VESC odometry updates. Its
+prediction is a CasADi-symbolic mirror of the blended, Pacejka single-track
+model in `f1tenth_parallel_sim`; it estimates
+`[x, y, yaw, vx, vy, yaw_rate, steer]` and takes Ackermann steering/speed
+commands as inputs. The transition, its Jacobian, and both measurement
+Jacobians are all derived from one CasADi graph (`ca.jacobian`), so the
+Jacobians used by the filter can never drift out of sync with the model that
+is actually stepped forward. VIO is intentionally not integrated. The nominal
+vehicle and tire values are ROS parameters, defaulting to the simulator's
+`f1tenth_car.toml`; override them per car in a launch file rather than relying
+on an external configuration package.
 
-During operation, the EKF is launched in EKF python launch file, called by the aforementioned main State Estimaiton launch file. The EKF launch file is located in `state_estimation/launch/ekf_launch.py`.
+`casadi` and `filterpy` are already part of the repo-wide Python requirements
+(`.install_utils/python_req.txt`), so no extra install step is needed beyond
+the usual environment setup.
+
+`ekf_launch.py` launches the new filter and continues to publish
+`/early_fusion/odom`, so existing Cartographer and car-state launch wiring does
+not change. The old `robot_localization` configuration remains in `config/ekf.yaml`
+solely to support controlled comparisons.
+
+For the simulator-equivalence tests and shared simulator utilities, install the
+CPU-only PyTorch build (the deployed RaceStack never requires CUDA):
+
+```
+python3 -m pip install -r requirements-cpu.txt
+```
+
+### Comparing the old and new filters without motion capture
+
+Record one representative bag containing `/odom`, `/sensors/imu/raw`,
+and `/ackermann_cmd_applied`, then replay it with:
+
+```
+ros2 launch state_estimation ekf_compare_launch.py
+```
+
+This runs both filters against exactly the same data and prints a report every
+10 seconds. It is deliberately a *consistency* benchmark, not a claim of
+absolute pose accuracy:
+
+- `held_out_imu_acceleration_residual` compares each output's finite-difference
+  body acceleration with the IMU. The default new filter does not correct on
+  acceleration, making this the most useful quasi-independent metric.
+- `imu_yaw_rate_residual` and `vesc_twist_residual` check agreement between
+  independent inertial and drivetrain channels.
+- `vesc_twist_nis` tests whether each filter's reported covariance matches its
+  observed odometry discrepancy (a calibrated NIS should be near its 3-D
+  degrees of freedom on average).
+- `velocity_jerk` catches a numerically good-looking estimate that is too noisy
+  to be useful to the controller.
+
+Use multiple runs with straight-line acceleration, steady circles, braking, and
+slaloms. Tune only on a subset, then compare the held-out maneuvers. Because
+the outputs and sensors share information, these scores cannot prove global
+position accuracy; they are a practical way to choose a model and tune noise
+without an external reference.
+
+### Comparing the old and new filters via SLAM scan-matching agreement
+
+`cartographer_ros` does not expose its internal scan-matcher cost/residual
+over ROS, so there is no direct "matching difficulty" number to read off.
+`slam_compare_launch.py` instead runs both EKFs (via `ekf_compare_launch.py`)
+alongside two independent, unmodified `f110_2d.lua` mapping-mode Cartographer
+instances -- one per candidate odometry, each in its own namespace so they
+don't collide on topics or the transform tree -- and `slam_match_benchmark_node`
+compares each instance's own scan-matched trajectory (`tracked_pose`) against
+its candidate's odometry:
+
+```
+ros2 launch state_estimation slam_compare_launch.py racecar_version:=NUC6 scan_topic:=/scan
+```
+
+- `cartographer_speed_residual` / `cartographer_yaw_rate_residual`: how much
+  Cartographer's own scan-matched motion disagrees with what the candidate
+  odometry predicted. A small, steady gap means the odometry was a good prior
+  for the scan matcher's search window -- i.e. matching was easier. A large
+  one means the matcher had to substantially override the prior.
+- `jump_events`: count of tracked_pose steps implying a speed or yaw rate far
+  outside the car's physical envelope -- a proxy for the matcher losing track
+  and re-converging elsewhere, excluded from the residual metrics above.
+
+This has not been run end-to-end against real `cartographer_ros`/hardware in
+this environment; treat the first run as a supervised smoke test.
 
 ### Parameters
 
@@ -90,4 +172,3 @@ These weight the probability of a hit or miss in the occupancy grid.
 - Miss probability: The trust in cells where we observe free space
 
 If we don't trust the lidar (eg. black tubes), we should reduce the miss probability (free space may mean undetected things).
-

@@ -117,7 +117,8 @@ unidentifiable.
   SI-unit command that actually proceeds to conversion.
 - **`single_publisher/commands/motor/speed`** and `.../servo/position` — expect
   exactly one (`ackermann_to_vesc`). See the note below.
-- **`alive/...`** — the five live data/command topics are producing messages.
+- **`alive/...`** — the seven live data/command topics (including the raw VESC `/odom` and the
+  estimator's `/early_fusion/odom`) are producing messages.
 
 ## Command path and recorded input
 
