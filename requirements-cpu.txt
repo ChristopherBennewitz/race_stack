@@ -1,0 +1,4 @@
+# RaceStack runs on the car CPU. Use PyTorch's CPU-only index explicitly so pip
+# never selects CUDA wheels or NVIDIA runtime dependencies.
+--index-url https://download.pytorch.org/whl/cpu
+torch

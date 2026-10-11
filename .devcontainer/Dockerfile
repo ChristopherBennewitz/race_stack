@@ -35,6 +35,9 @@ RUN apt-get update && xargs apt-get install -y < /.install_utils/linux_req.txt
 ADD ./.install_utils/python_req.txt /tmp/.install_utils/python_req.txt
 RUN pip3 install -r /tmp/.install_utils/python_req.txt &&\
     pip3 install quadprog~=0.1.11
+ADD ./requirements-cpu.txt /tmp/requirements-cpu.txt
+# The Jetson image brings its own CUDA build of torch; the CPU wheels are for the NUC and other CPU-only targets.
+RUN if [[ "$PLATFORM" != "jet" ]]; then pip3 install -r /tmp/requirements-cpu.txt; fi
 
 ADD ./.install_utils /.install_utils
 RUN useradd -ms /bin/bash -u ${UID} -G sudo ${USER} && groupadd -fg ${GID} ${USER} \
