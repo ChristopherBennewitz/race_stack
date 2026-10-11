@@ -37,6 +37,7 @@ setup(
         (os.path.join('share', package_name, 'config', 'NUC7'), glob(os.path.join('config', 'NUC7', '*.yaml'))),
         (os.path.join('share', package_name, 'config', 'SIM'), glob(os.path.join('config', 'SIM', '*.*'))),
         (os.path.join('share', package_name, 'config', 'global_planner'), glob(os.path.join('config', 'global_planner', '*.*'))),
+        (os.path.join('share', package_name, 'viz'), glob(os.path.join('viz', '*.rviz'))),
         (os.path.join('share', package_name, 'config', 'global_planner', 'veh_dyn_info'), glob(os.path.join('config', 'global_planner', 'veh_dyn_info', '*.csv'))),
         *map_subfolders,
     ],

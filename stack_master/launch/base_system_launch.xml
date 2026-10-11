@@ -4,7 +4,8 @@
   <arg name="map_name" default="latest" description="Map name in stack_master/maps" />
   <arg name="sim" default="False" description="True/False if you want to run simulation" />
   <arg name="loc_algorithm" default="slam" description="'slam' / 'synpf' to switch localisation algorithm" />
-  <arg name="publish_centerline" default="False" description="True to also publish /centerline_waypoints (needed by rl_controller)" />
+  <arg name="publish_centerline" default="True" description="Publish /centerline_waypoints (needed by rl_controller and the RViz centerline view)" />
+  <arg name="rviz" default="False" description="True to open RViz with the map, scan, car pose, centerline and global waypoints" />
   <arg name="frenet" default="True" description="True/False to wait for /global_waypoints and publish /car_state/frenet (False for tracks without a raceline)" />
 
   <!-- Note: This is merely the share path (read-only) as the base_system
@@ -45,6 +46,12 @@
     <param from="$(find-pkg-share stack_master)/config/$(var racecar_version)/l1_params.yaml" /> -->
     <param name="use_sim_time" value="$(var sim)" />
   </node>
+
+  <!-- optional operator view; the centerline display needs publish_centerline (on by default) -->
+  <group if="$(var rviz)">
+    <node pkg="rviz2" exec="rviz2" name="base_system_rviz" output="screen"
+          args="-d $(find-pkg-share stack_master)/viz/head_to_head.rviz" />
+  </group>
 
   <!-- launch global trajectory republisher via included launch -->
   <include file="$(find-pkg-share global_planner)/launch/global_trajectory_publisher_launch.xml">
