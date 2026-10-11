@@ -38,6 +38,9 @@ RUN pip3 install -r /tmp/.install_utils/python_req.txt &&\
 ADD ./requirements-cpu.txt /tmp/requirements-cpu.txt
 # The Jetson image brings its own CUDA build of torch; the CPU wheels are for the NUC and other CPU-only targets.
 RUN if [[ "$PLATFORM" != "jet" ]]; then pip3 install -r /tmp/requirements-cpu.txt; fi
+# Installing torch can bring in a newer setuptools, which breaks ROS 2 Humble's colcon --symlink-install
+# (python_req.txt pins this version for that reason), so pin it again afterwards.
+RUN pip3 install "setuptools==58.2.0"
 
 ADD ./.install_utils /.install_utils
 RUN useradd -ms /bin/bash -u ${UID} -G sudo ${USER} && groupadd -fg ${GID} ${USER} \

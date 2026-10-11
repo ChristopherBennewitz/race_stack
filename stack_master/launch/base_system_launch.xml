@@ -4,6 +4,7 @@
   <arg name="map_name" default="latest" description="Map name in stack_master/maps" />
   <arg name="sim" default="False" description="True/False if you want to run simulation" />
   <arg name="loc_algorithm" default="slam" description="'slam' / 'synpf' to switch localisation algorithm" />
+  <arg name="publish_centerline" default="False" description="True to also publish /centerline_waypoints (needed by rl_controller)" />
   <arg name="frenet" default="True" description="True/False to wait for /global_waypoints and publish /car_state/frenet (False for tracks without a raceline)" />
 
   <!-- Note: This is merely the share path (read-only) as the base_system
@@ -48,6 +49,7 @@
   <!-- launch global trajectory republisher via included launch -->
   <include file="$(find-pkg-share global_planner)/launch/global_trajectory_publisher_launch.xml">
     <arg name="map_path" value="$(var map_path)" />
+    <arg name="publish_centerline" value="$(var publish_centerline)" />
   </include>
 
 

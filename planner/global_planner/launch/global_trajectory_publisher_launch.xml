@@ -1,12 +1,13 @@
 <?xml version="1.0"?>
 <launch>
     <arg name="map_path" description="Path to the map file (yaml or similar). Override with a launch arg or set MAP_PATH env var." />
+    <arg name="publish_centerline" default="false" description="Also publish /centerline_waypoints (needed by rl_controller)" />
 
     <node pkg="global_planner" name="global_republisher" exec="global_trajectory_publisher">
         <param name="map_path" value="$(var map_path)" />
         <param name="publish_markers" value="true" />
         <param name="publish_shortest_path" value="true" />
-        <param name="publish_centerline" value="false" />
+        <param name="publish_centerline" value="$(var publish_centerline)" />
         <param name="publish_lattice" value="false" />
     </node>
 </launch>
