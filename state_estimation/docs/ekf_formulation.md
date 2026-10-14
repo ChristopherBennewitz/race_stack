@@ -8,7 +8,7 @@ VESC odometry. VIO is not integrated.
 ## 1. State and control
 
 $$
-\mathbf{x} = \begin{bmatrix} x & y & \psi & v_x & v_y & \omega & \delta & \delta_{\ell} \end{bmatrix}^\top \in \mathbb{R}^8
+\mathbf{x} = \begin{bmatrix} x & y & \psi & v_x & v_y & \omega & \delta \end{bmatrix}^\top \in \mathbb{R}^7
 $$
 
 | symbol | meaning |
@@ -18,10 +18,9 @@ $$
 | $v_x, v_y$ | body-frame longitudinal / lateral velocity |
 | $\omega$ | yaw rate |
 | $\delta$ | steering angle (filter **state**, not a direct input) |
-| $\delta_\ell$ | intermediate steering-lag state (second stage of the actuator) |
 
 $$
-\mathbf{u} = \begin{bmatrix} v_{\mathrm{cmd}} & \delta_{\mathrm{cmd}} \end{bmatrix}^\top \in \mathbb{R}^2
+\mathbf{u} = \begin{bmatrix} v_{\mathrm{cmd}} & \delta_{\mathrm{cmd}}(t-T_d) \end{bmatrix}^\top \in \mathbb{R}^2
 $$
 
 $v_{\mathrm{cmd}}$ is the applied speed command (Ackermann `speed`, used as is) and
@@ -29,7 +28,12 @@ $\delta_{\mathrm{cmd}}$ is the commanded steering angle (Ackermann
 `steering_angle`, positive = left, as in the simulator). Both come from
 `/ackermann_cmd_applied`, the actuation manager's rate/range-limited output
 (`cmd_topic`) -- the plant input the model was identified against, not the raw
-`/drive` request.
+`/drive` request. The steering entry of $\mathbf u$ is the command **as delayed by**
+$T_d$ (`steer_delay`): the node keeps a time-stamped history of the commands
+(`CommandDelay`) and looks up the one issued $T_d$ earlier (linear interpolation, held
+at the newest), at the middle of the predict interval for the prediction and at the
+current time for the measurement updates. The command is a known input, so this is exact
+and needs no delay states; it mirrors the simulator's `BatchedSim._delayed_steer`.
 The drive effort per unit mass $a$ used below is *derived* from the state and
 $v_{\mathrm{cmd}}$ by the speed loop of §3; it is a force request
 ($F = m a$), not the physical acceleration.
@@ -40,10 +44,11 @@ $m, I_z, l_f, l_r, h_{cg}$ (mass, yaw inertia, axle distances, CoG height);
 front/rear Pacejka coefficients $B_i, C_i, D_i, E_i$ for $i \in \{f, r\}$;
 $\lambda$ = `front_drive_frac`; $T_c$ = `constraint_time_constant`; $v_b$ =
 `blend_center`; $\varepsilon$ = `slip_speed_regularizer`; $\tau$ =
-`steer_latency` (total of the two steering lags); $k_\delta$, $b_\delta$ =
+`steer_latency` (the single steering lag); $T_d$ = `steer_delay`; $k_\delta$, $b_\delta$ =
 `steer_gain`, `steer_bias`; $k_d$, $k_b$ = `drive_gain`, `brake_gain`.
 Wheelbase $L = l_f + l_r$. Defaults are the simulator's fitted
-`f1tenth_car.toml` values. Command range/rate limits belong to the actuation
+`f1tenth_car.toml` values (actuator parameters from `runs/sysid/fit/20261011-151030`, tires from
+`fit_clean/20261004-233031`). Command range/rate limits belong to the actuation
 limiter and are not modelled here.
 
 ## 3. Continuous-time dynamics
@@ -53,14 +58,12 @@ transition **and** every Jacobian used by the filter are derived from that one
 graph (`ca.jacobian`), so they cannot drift apart from each other.
 
 **Actuators** (mirrors `f1tenth_sim.actuators.ActuatorModel`). The steering
-command maps linearly to a road-wheel target that the wheel follows through two
-equal first-order lags whose time constants add up to $T_s$ (`steer_latency`),
-i.e. a stage time constant $T_s/2$:
+command, already delayed by $T_d$, maps linearly to a road-wheel target that the wheel
+follows through a first-order lag of time constant $\tau$ (`steer_latency`):
 
 $$
-\delta^\star = k_\delta\,\delta_{\mathrm{cmd}} + b_\delta, \qquad
-\dot\delta = \frac{\delta_\ell - \delta}{T_s/2}, \qquad
-\dot\delta_\ell = \frac{\delta^\star - \delta_\ell}{T_s/2}
+\delta^\star = k_\delta\,\delta_{\mathrm{cmd}}(t-T_d) + b_\delta, \qquad
+\dot\delta = \frac{\delta^\star - \delta}{\tau}
 $$
 
 Drive effort per unit mass is a proportional speed loop, with the gain
@@ -113,8 +116,7 @@ v_x\sin\psi + v_y\cos\psi \\
 \dfrac{F_{x,r}+F_{x,f}\cos\delta-F_{y,f}\sin\delta}{m} + \omega v_y \\
 \dfrac{F_{y,r}+F_{x,f}\sin\delta+F_{y,f}\cos\delta}{m} - \omega v_x \\
 \dfrac{l_f(F_{x,f}\sin\delta+F_{y,f}\cos\delta) - l_r F_{y,r}}{I_z} \\
-\dot\delta \\
-\dot\delta_\ell
+\dot\delta
 \end{bmatrix}
 $$
 
@@ -137,8 +139,7 @@ v_x\sin\psi + v_y\cos\psi \\
 a \\
 \dot v_y^\* + (v_y^\*-v_y)/T_c \\
 \dot\omega^\* + (\omega^\*-\omega)/T_c \\
-\dot\delta \\
-\dot\delta_\ell
+\dot\delta
 \end{bmatrix}
 $$
 
@@ -172,22 +173,27 @@ $$
 P_{k+1|k} = F_k P_k F_k^\top + Q\,\mathrm{d}t
 $$
 
-$Q = \operatorname{diag}(q_1,\dots,q_8)$ is a fixed ROS-parameter tuning matrix
-(default $\operatorname{diag}(4.9\mathrm{e}{-5},\,3.6\mathrm{e}{-5},\,3.6\mathrm{e}{-5},\,5.8\mathrm{e}{-4},\,1.8\mathrm{e}{-3},\,6.7\mathrm{e}{-2},\,2.3\mathrm{e}{-5},\,6.9\mathrm{e}{-3})$, see below), scaled by $\mathrm{d}t$ so covariance growth is
+$Q = \operatorname{diag}(q_1,\dots,q_7)$ is a fixed ROS-parameter tuning matrix
+(default $\operatorname{diag}(4.9\mathrm{e}{-5},\,3.6\mathrm{e}{-5},\,3.6\mathrm{e}{-5},\,4.0\mathrm{e}{-4},\,2.6\mathrm{e}{-3},\,0.18,\,4.2\mathrm{e}{-3})$, see below), scaled by $\mathrm{d}t$ so covariance growth is
 time-proportional.
 
 The default $Q$ comes from the simulator's system identification
-(`runs/sysid/fit_clean/20261004-233031`): the fitted parameter covariance
-(steering, drive/brake and Pacejka parameters, with their correlations) was
+(actuator block from `runs/sysid/fit/20261011-151030`, tire block from
+`fit_clean/20261004-233031`, the tire values the car config still uses): the fitted
+parameter covariance (steering, drive/brake and Pacejka parameters, with their
+correlations within each block) was
 sampled and propagated through $f_c$ over a grid of speeds, steering angles and
-commands; the variance of the resulting derivative error per state, times the
+commands (the steering-delay uncertainty enters as an equivalent steering-command error,
+delay error times a steering rate of $0,\pm1$ rad/s, because the delay is not in the graph);
+the variance of the resulting derivative error per state, times the
 nominal $\mathrm{d}t = 0.01\,\mathrm{s}$, gives $q_i$ for
-$v_x, v_y, \omega, \delta, \delta_\ell$. $x, y, \psi$ depend on no identified
+$v_x, v_y, \omega, \delta$. $x, y, \psi$ depend on no identified
 parameter directly, so they use the sysid pose noise variances. The yaw-rate
-entry is large because the rear tire stiffness/shape parameters are poorly
-determined. The fit's residuals were 9.4x the assumed noise, so these values
-are, if anything, optimistic. The default $R$ takes the sysid gyro yaw-rate
-variance ($0.03^2$) for the IMU and the odometry speed variance ($0.2^2$) for
+entry is large because the rear tire parameters and the steering delay are poorly
+determined. The fit's residuals were about 10x the assumed noise, so these values
+are, if anything, optimistic: on the Oct 11 bags a threefold larger $Q$ improved the
+yaw-rate error slightly. The default $R$ takes the sysid gyro yaw-rate
+variance ($0.03^2$) for the IMU and the odometry speed variance ($0.15^2$) for
 $v_x$. The VESC pose entries are set huge (see §5) and the remaining entries are
 unchanged (the sysid pose sigmas describe SLAM, not VESC odometry).
 
@@ -204,7 +210,7 @@ $$
 
 where $\dot v_x, \dot v_y$ are the **blended** velocity derivatives from
 $f_c$, so the expected acceleration is consistent with whatever
-kinematic/dynamic mix is active. $H_{\mathrm{imu}} = \partial h_{\mathrm{imu}}/\partial\mathbf{x} \in \mathbb{R}^{4\times8}$,
+kinematic/dynamic mix is active. $H_{\mathrm{imu}} = \partial h_{\mathrm{imu}}/\partial\mathbf{x} \in \mathbb{R}^{4\times7}$,
 CasADi-exact.
 
 $$
@@ -227,14 +233,14 @@ the node does not run `predict`/`update` at all before this happens.
 $$
 \mathbf{z}_{\mathrm{vesc}} = \begin{bmatrix}x_m & y_m & \psi_m & v_{x,m} & v_{y,m} & \omega_m\end{bmatrix}^\top,
 \qquad
-h_{\mathrm{vesc}}(\mathbf{x}) = H_{\mathrm{vesc}}\,\mathbf{x}, \quad H_{\mathrm{vesc}} = \begin{bmatrix}I_6 & \mathbf 0_{6\times2}\end{bmatrix}
+h_{\mathrm{vesc}}(\mathbf{x}) = H_{\mathrm{vesc}}\,\mathbf{x}, \quad H_{\mathrm{vesc}} = \begin{bmatrix}I_6 & \mathbf 0_{6\times1}\end{bmatrix}
 $$
 
-i.e. a fixed linear selection of the first six states (the steering states are
+i.e. a fixed linear selection of the first six states (the steering angle is
 unobserved by this sensor); $H_{\mathrm{vesc}}$ is thus its own Jacobian.
 
 $$
-R_{\mathrm{vesc}} = \operatorname{diag}(\sigma_x^2,\sigma_y^2,\sigma_\psi^2,\sigma_{v_x}^2,\sigma_{v_y}^2,\sigma_\omega^2), \quad \text{default } \operatorname{diag}(10^6,\,10^6,\,10^6,\,0.04,\,100,\,0.1)
+R_{\mathrm{vesc}} = \operatorname{diag}(\sigma_x^2,\sigma_y^2,\sigma_\psi^2,\sigma_{v_x}^2,\sigma_{v_y}^2,\sigma_\omega^2), \quad \text{default } \operatorname{diag}(10^6,\,10^6,\,10^6,\,0.0225,\,100,\,0.1)
 $$
 
 The VESC pose entries are deliberately huge, so the pose is **not** fused: the VESC odometry
@@ -273,7 +279,7 @@ update and the next predict).
 ## 7. Initialization
 
 $$
-\hat{\mathbf x}_0 = \mathbf 0_8, \qquad P_0 = 10\,I_8
+\hat{\mathbf x}_0 = \mathbf 0_7, \qquad P_0 = 10\,I_7
 $$
 
 refined immediately by the first IMU message as in §5. The filter does not
@@ -282,7 +288,7 @@ predict or update until `is_initialized` is set.
 ## 8. Output
 
 Published state is $[\hat x_0,\hat x_1,\hat x_2,\hat x_3,\hat x_4,\hat x_5]$
-(steering states $\hat x_6,\hat x_7$ are internal only) as `nav_msgs/Odometry` on
+(the steering angle $\hat x_6$ is internal only) as `nav_msgs/Odometry` on
 `/early_fusion/odom` at the filter's own rate (i.e. only on ticks that actually ran a
 predict). The `odom → base_link` TF is off by default (`publish_tf`): Cartographer
 publishes `map → base_link` and a static `map → odom` exists, so a second parent for

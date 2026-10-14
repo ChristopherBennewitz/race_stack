@@ -7,7 +7,8 @@ sequential updates to the filter with newest sensor data.
 Measurement data used:
     - IMU: [yaw, yaw_rate, ax, ay]
     - VESC: [x, y, yaw, vx, vy, yaw_rate]
-    - ACKERMANN: [speed, steer_angle] (control input only)
+    - ACKERMANN: [speed, steer_angle] (control input only; the steering command is delayed by steer_delay
+      before it enters the model)
 
 VIO is intentionally not integrated. Sensors are configured in a single list
 in __init__ (see self.sensors); adding a new sensor is one line there.
@@ -29,7 +30,7 @@ from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from tf2_ros import TransformBroadcaster
 
-from .models import SimulatorSingleTrackModel, VehicleModelParams
+from .models import CommandDelay, SimulatorSingleTrackModel, VehicleModelParams
 from .sensors import ImuSensor, OdomSensor
 
 
@@ -42,9 +43,11 @@ class EkfNode(Node):
             ('frequency', 100.0), ('odom_topic', '/early_fusion/odom'),
             ('imu_topic', '/sensors/imu/raw'), ('vesc_topic', '/odom'),
             ('cmd_topic', '/ackermann_cmd_applied'),
-            # Actuator model, fitted by the simulator's sysid.
-            ('steer_gain', 1.50936), ('steer_bias', 0.00332491), ('steer_latency', 0.111489),
-            ('drive_gain', 3.59866), ('brake_gain', 5.00361),
+            # Actuator model, fitted by the simulator's sysid (runs/sysid/fit/20261011-151030): the steering
+            # command is delayed by steer_delay, then followed through one lag of steer_latency.
+            ('steer_gain', 1.6746), ('steer_bias', 0.000807634),
+            ('steer_delay', 0.0871629), ('steer_latency', 0.0338089),
+            ('drive_gain', 3.99169), ('brake_gain', 5.51182),
             ('front_drive_frac', 0.5), ('constraint_time_constant', 0.03),
             ('blend_center', 0.6), ('slip_speed_regularizer', 0.1),
             ('imu_accel_alpha', 0.2),
@@ -61,15 +64,16 @@ class EkfNode(Node):
             ('rear_D', 0.572528), ('rear_E', 0.0),
         ):
             self.declare_parameter(name, default)
-        # Noise from the simulator's sysid (fit_clean/20261004-233031): gyro yaw_rate sigma 0.03,
-        # odometry speed sigma 0.20. Q is the sysid parameter covariance propagated through the model
-        # (rate error variance x nominal dt); x/y/yaw have no parameter dependence and use the sysid
-        # pose sigmas (0.007, 0.006, 0.006).
+        # Noise from the simulator's sysid (configs/sysid.toml): gyro yaw_rate sigma 0.03, odometry speed
+        # sigma 0.15. Q is the sysid parameter covariance (actuator block of fit/20261011-151030, tire block
+        # of fit_clean/20261004-233031) propagated through the model (rate error variance x nominal dt, with
+        # the steering-delay uncertainty as an equivalent steering-command error); x/y/yaw have no parameter
+        # dependence and use the sysid pose sigmas (0.007, 0.006, 0.006).
         self.declare_parameter('R_imu', [0.1, 0.0009, 1000000.0, 1000000.0])
         # VESC pose is not fused (huge R): its x/y/yaw are dead-reckoned in a frame with an arbitrary yaw
         # origin, which would fight the IMU heading. Only its vx, vy and yaw rate are used.
-        self.declare_parameter('R_vesc', [1000000.0, 1000000.0, 1000000.0, 0.04, 100.0, 0.1])
-        self.declare_parameter('Q', [4.9e-5, 3.6e-5, 3.6e-5, 5.8e-4, 1.8e-3, 6.7e-2, 2.3e-5, 6.9e-3])
+        self.declare_parameter('R_vesc', [1000000.0, 1000000.0, 1000000.0, 0.0225, 100.0, 0.1])
+        self.declare_parameter('Q', [4.9e-5, 3.6e-5, 3.6e-5, 4.0e-4, 2.6e-3, 0.18, 4.2e-3])
 
         self.Hz = self.get_parameter('frequency').value
         self.publish_tf = self.get_parameter('publish_tf').value
@@ -101,6 +105,7 @@ class EkfNode(Node):
             slip_speed_regularizer=self.get_parameter('slip_speed_regularizer').value,
             steer_gain=self.get_parameter('steer_gain').value,
             steer_bias=self.get_parameter('steer_bias').value,
+            steer_delay=self.get_parameter('steer_delay').value,
             steer_latency=self.get_parameter('steer_latency').value,
             drive_gain=self.get_parameter('drive_gain').value,
             brake_gain=self.get_parameter('brake_gain').value,
@@ -114,7 +119,9 @@ class EkfNode(Node):
         self.ekf.P = self.model.P_0
 
         # Control input array
-        self.ackermann_data = np.zeros(2)  # [speed, steer_angle]
+        self.ackermann_data = np.zeros(2)  # latest [speed, steer_angle] command
+        # Steering command history; the model is driven by the command as delayed by steer_delay.
+        self.steer_history = CommandDelay(self.get_parameter('steer_delay').value)
 
         # General stuff
         self.lock = threading.Lock()
@@ -177,6 +184,7 @@ class EkfNode(Node):
         with self.lock:
             self.ackermann_data[0] = msg.drive.speed
             self.ackermann_data[1] = msg.drive.steering_angle
+            self.steer_history.push(self.get_clock().now().nanoseconds * 1e-9, msg.drive.steering_angle)
 
     # Helper functions
     def shutdown(self):
@@ -259,7 +267,7 @@ class EkfNode(Node):
         with self.lock:
             # Get snapshot of newest measurement data, cmd inputs, and flags to use in prediction and update steps
             initialized = self.is_initialized
-            u = np.copy(self.ackermann_data)
+            speed_cmd = self.ackermann_data[0]
             snapshots = [(sensor, *sensor.snapshot()) for sensor in self.sensors]
 
         if not initialized:
@@ -278,10 +286,18 @@ class EkfNode(Node):
             return
         self.last_filter_time = now
 
+        # The model's steering input is the command as delayed by steer_delay: at the middle of the predict
+        # interval for the prediction, at the current time for the measurement updates.
+        with self.lock:
+            steer_pred = self.steer_history.at(now - 0.5 * dt)
+            steer_now = self.steer_history.at(now)
+        u_pred = np.array([speed_cmd, steer_pred])
+        u = np.array([speed_cmd, steer_now])
+
         t0 = time.perf_counter_ns()
 
         # predict
-        self.model.predict(ekf=self.ekf, dt=dt, u=u)
+        self.model.predict(ekf=self.ekf, dt=dt, u=u_pred)
 
         t1 = time.perf_counter_ns()
         duration_ms = (t1 - t0) / 1_000_000.0

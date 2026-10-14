@@ -19,8 +19,8 @@ def generate_launch_description():
                 'imu_topic': LaunchConfiguration('imu_topic'),
                 'frequency': 100.0,
                 'R_imu': [0.1, 0.0009, 1e6, 1e6],
-                'R_vesc': [1e6, 1e6, 1e6, 0.04, 100.0, 0.1],
-                'Q': [4.9e-5, 3.6e-5, 3.6e-5, 5.8e-4, 1.8e-3, 6.7e-2, 2.3e-5, 6.9e-3],
+                'R_vesc': [1e6, 1e6, 1e6, 0.0225, 100.0, 0.1],
+                'Q': [4.9e-5, 3.6e-5, 3.6e-5, 4.0e-4, 2.6e-3, 0.18, 4.2e-3],
             }],
         ),
     ])

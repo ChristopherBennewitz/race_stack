@@ -18,7 +18,7 @@ import numpy as np
 
 
 GRAVITY = 9.81
-STATE_DIM = 8
+STATE_DIM = 7
 
 
 @dataclass(frozen=True)
@@ -44,6 +44,7 @@ class VehicleModelParams:
     slip_speed_regularizer: float = 0.1
     steer_gain: float = 1.0
     steer_bias: float = 0.0
+    steer_delay: float = 0.0
     steer_latency: float = 0.1
     drive_gain: float = 3.0
     brake_gain: float = 5.0
@@ -51,6 +52,37 @@ class VehicleModelParams:
     @property
     def wheelbase(self) -> float:
         return self.l_f + self.l_r
+
+
+class CommandDelay:
+    """Time-stamped command history that returns the command as it was ``delay`` seconds ago.
+
+    The simulator delays the steering command by ``steer_delay`` before it reaches the first-order
+    steering lag (``BatchedSim._delayed_steer``). The command is a known input, so the EKF does not need
+    delay states: it looks the delayed command up here and feeds it to the model as ``u[1]``. Values are
+    linearly interpolated, held at the newest command, and before the first sample the first value is used.
+    """
+
+    def __init__(self, delay: float, horizon: float = 1.0) -> None:
+        self.delay = float(delay)
+        self.horizon = max(float(horizon), self.delay + 0.1)
+        self._t: list[float] = []
+        self._v: list[float] = []
+
+    def push(self, t: float, value: float) -> None:
+        if self._t and t <= self._t[-1]:
+            return
+        self._t.append(float(t))
+        self._v.append(float(value))
+        cut = t - self.horizon
+        while len(self._t) > 2 and self._t[1] < cut:
+            del self._t[0], self._v[0]
+
+    def at(self, t: float) -> float:
+        """The command in effect at the plant at time ``t``, i.e. the one issued at ``t - delay``."""
+        if not self._t:
+            return 0.0
+        return float(np.interp(t - self.delay, self._t, self._v))
 
 
 def _magic_formula(alpha, B, C, D, E, fz):
@@ -66,19 +98,20 @@ def _wrap_angle(angle):
 class SimulatorSingleTrackModel:
     """CasADi-symbolic, simulator-compatible seven-state single-track model.
 
-    State x = [x, y, yaw, vx, vy, yaw_rate, steer, steer_lag]
-    Control u = [speed_command, steer_command]
+    State x = [x, y, yaw, vx, vy, yaw_rate, steer]
+    Control u = [speed_command, steer_command_delayed]
 
     The dynamic/kinematic blending, tire forces, load transfer and
     front-drive force split match the parallel simulator, as does the
     actuator model (``f1tenth_sim.actuators.ActuatorModel``): the steering
-    command maps linearly (gain, bias) to a road-wheel target that the wheel
-    follows through two equal first-order lags (``steer`` and the
-    intermediate ``steer_lag`` state) whose time constants sum to
+    command, already delayed by ``steer_delay``, maps linearly (gain, bias)
+    to a road-wheel target that the wheel follows through a first-order lag
     ``steer_latency``, and the drive effort per unit mass is a proportional
     speed loop ``gain * (speed_command - vx)`` with separate drive/brake
-    gains. ``u`` is therefore the raw commanded speed/steering angle; the
-    command rate/range limits live in the actuation limiter, not here.
+    gains. The delay is not in the graph: ``u[1]`` is the steering command
+    *as delayed by the caller* (see :class:`CommandDelay`), which is exact
+    because the command is a known input. The command rate/range limits
+    live in the actuation limiter, not here.
     """
 
     dim_x = STATE_DIM
@@ -93,7 +126,7 @@ class SimulatorSingleTrackModel:
         self.P_0 = np.eye(STATE_DIM) * 10.0
 
         p = params
-        inv_stage = 2.0 / max(p.steer_latency, 1e-4)
+        inv_tau = 1.0 / max(p.steer_latency, 1e-4)
 
         # CasADi symbols
         x_sym = ca.MX.sym('x', self.dim_x)
@@ -108,15 +141,13 @@ class SimulatorSingleTrackModel:
         vy = x_sym[4]
         yaw_rate = x_sym[5]
         steer = x_sym[6]
-        steer_lag = x_sym[7]
         vel_cmd = u_sym[0]
         steer_cmd = u_sym[1]
 
-        # Actuators: two equal first-order steering lags, proportional speed loop. `accel` is
-        # drive effort per unit mass (a force request, F = m * accel), not physical acceleration.
+        # Actuators: first-order steering lag toward the (already delayed) command, proportional speed loop.
+        # `accel` is drive effort per unit mass (a force request, F = m * accel), not physical acceleration.
         steer_target = p.steer_gain * steer_cmd + p.steer_bias
-        steer_rate = (steer_lag - steer) * inv_stage
-        lag_rate = (steer_target - steer_lag) * inv_stage
+        steer_rate = (steer_target - steer) * inv_tau
         accel = ca.if_else(vel_cmd**2 > vx**2, p.drive_gain, p.brake_gain) * (vel_cmd - vx)
 
         # Lateral tire forces (simulator sign conventions).
@@ -144,7 +175,6 @@ class SimulatorSingleTrackModel:
             vy_star_dot + (vy_star - vy) / p.constraint_time_constant,
             yaw_rate_star_dot + (yaw_rate_star - yaw_rate) / p.constraint_time_constant,
             steer_rate,
-            lag_rate,
         )
 
         drive_force = p.m * accel
@@ -159,7 +189,6 @@ class SimulatorSingleTrackModel:
             sum_fy / p.m - yaw_rate * vx,
             sum_mz / p.I_z,
             steer_rate,
-            lag_rate,
         )
 
         weight_dynamic = vx**2 / (vx**2 + p.blend_center**2)
@@ -171,7 +200,7 @@ class SimulatorSingleTrackModel:
         x_next_raw = x_sym + dt * derivatives
         x_next = ca.vertcat(
             x_next_raw[0], x_next_raw[1], _wrap_angle(x_next_raw[2]),
-            x_next_raw[3], x_next_raw[4], x_next_raw[5], x_next_raw[6], x_next_raw[7],
+            x_next_raw[3], x_next_raw[4], x_next_raw[5], x_next_raw[6],
         )
         self.f = ca.Function('f', [x_sym, u_sym, dt], [x_next])
         self.F = ca.Function('F', [x_sym, u_sym, dt], [ca.jacobian(x_next, x_sym)])
@@ -201,6 +230,6 @@ class SimulatorSingleTrackModel:
 
     @staticmethod
     def get_odom_state(x: np.ndarray) -> np.ndarray:
-        # x = [x, y, yaw, vx, vy, yaw_rate, steer, steer_lag]
+        # x = [x, y, yaw, vx, vy, yaw_rate, steer]
         # state = [x, y, yaw, vx, vy, yaw_rate]
         return np.asarray(x, dtype=float)[:6]
