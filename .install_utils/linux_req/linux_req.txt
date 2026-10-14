@@ -18,11 +18,13 @@ ros-humble-rosbridge-server
 ros-humble-serial-driver
 ros-humble-test-msgs
 ros-humble-rqt
-ros-humble-rqt-common-plugins
-ros-humble-rqt-reconfigure
 ros-humble-xacro
 ros-humble-nav2-map-server
 ros-humble-nav2-lifecycle-manager
 ros-humble-rmw-zenoh-cpp
 ros-humble-rviz2
 python3-tk
+ros-humble-imu-pipeline
+ros-humble-rqt*
+ros-humble-rqt-common-plugins
+ros-humble-realsense2-*

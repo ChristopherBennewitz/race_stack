@@ -1,21 +1,5 @@
 #!/usr/bin/env python3
-"""
-EKF Node implementing an Extended Kalman Filter (filterpy) with a CasADi
-symbolic mirror of the simulator's blended single-track model. Applies
-sequential updates to the filter with newest sensor data.
-
-Measurement data used:
-    - IMU: [yaw, yaw_rate, ax, ay]
-    - VESC: [x, y, yaw, vx, vy, yaw_rate]
-    - ACKERMANN: [speed, steer_angle] (control input only; the steering command is delayed by steer_delay
-      before it enters the model)
-
-VIO is intentionally not integrated. Sensors are configured in a single list
-in __init__ (see self.sensors); adding a new sensor is one line there.
-"""
-
-from __future__ import annotations
-
+import os
 import threading
 import time
 
@@ -24,130 +8,195 @@ import rclpy
 import tf_transformations as tft
 from ackermann_msgs.msg import AckermannDriveStamped
 from filterpy.kalman import ExtendedKalmanFilter
-from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
-from rcl_interfaces.msg import SetParametersResult
+from pbl_config import load_car_config_ros, load_pacejka_tire_config_ros, get_remote_parameter
 from rclpy.node import Node
+from rcl_interfaces.msg import SetParametersResult
+
+from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformBroadcaster
 
+from . import models
 from .models import CommandDelay, SimulatorSingleTrackModel, VehicleModelParams
 from .sensors import ImuSensor, OdomSensor
 
 
 class EkfNode(Node):
-    """IMU + VESC EKF; VIO is deliberately not part of this implementation."""
+    """
+    EKF Node implementing an Extended Kalman Filter. Applies sequential updates to the filter with newest sensor data.
+
+    Measurement data used:
+        - IMU: [psi, vpsi, ax, ay]
+        - VESC: [x, y, psi, vx, vy, vpsi]
+        - VIO: [x, y, psi, vx, vy, vpsi]
+        - ACKERMANN: [accel, steer_angle]
+
+    Sensors are configured in a single list in __init__ (see self.sensors); adding
+    a new sensor is one line there.
+    """
 
     def __init__(self):
         super().__init__('ekf_node')
+
+        self.declare_parameter('frequency', 100)
+        self.declare_parameter('model_type', 'point_mass_model')
+        self.declare_parameter('odom_topic', '/state_estimation/odom')
+        self.declare_parameter('imu_topic', '/imu')
+        self.declare_parameter('vesc_topic', '/odom')
+        self.declare_parameter('vio_topic', '/basalt/odom')
+        self.declare_parameter('send_transform', False)
+        self.declare_parameter('floor', rclpy.Parameter.Type.STRING)
+        self.declare_parameter('R_imu', rclpy.Parameter.Type.DOUBLE_ARRAY)
+        self.declare_parameter('R_vesc', rclpy.Parameter.Type.DOUBLE_ARRAY)
+        self.declare_parameter('R_vio', rclpy.Parameter.Type.DOUBLE_ARRAY)
+        self.declare_parameter('Q', rclpy.Parameter.Type.DOUBLE_ARRAY)
+
+        # Parameters of model_type 'simulator_single_track_model'. They live apart from the pbl_config
+        # car/tire config and from the shared R/Q above, which are sized for the other models.
+        # Actuator model, fitted by the simulator's sysid (runs/sysid/fit/20261011-151030): the steering
+        # command is delayed by steer_delay, then followed through one lag of steer_latency.
         for name, default in (
-            ('frequency', 100.0), ('odom_topic', '/early_fusion/odom'),
-            ('imu_topic', '/sensors/imu/raw'), ('vesc_topic', '/odom'),
-            ('cmd_topic', '/ackermann_cmd_applied'),
-            # Actuator model, fitted by the simulator's sysid (runs/sysid/fit/20261011-151030): the steering
-            # command is delayed by steer_delay, then followed through one lag of steer_latency.
-            ('steer_gain', 1.6746), ('steer_bias', 0.000807634),
-            ('steer_delay', 0.0871629), ('steer_latency', 0.0338089),
-            ('drive_gain', 3.99169), ('brake_gain', 5.51182),
-            ('front_drive_frac', 0.5), ('constraint_time_constant', 0.03),
-            ('blend_center', 0.6), ('slip_speed_regularizer', 0.1),
-            ('imu_accel_alpha', 0.2),
-            # Off by default: Cartographer publishes map->base_link and a static map->odom exists, so an
-            # odom->base_link broadcast would give base_link two parents and make the SLAM pose jump.
-            ('publish_tf', False),
+            ('sim_cmd_topic', '/ackermann_cmd_applied'),
+            ('sim_steer_gain', 1.6746), ('sim_steer_bias', 0.000807634),
+            ('sim_steer_delay', 0.0871629), ('sim_steer_latency', 0.0338089),
+            ('sim_drive_gain', 3.99169), ('sim_brake_gain', 5.51182),
+            ('sim_front_drive_frac', 0.5), ('sim_constraint_time_constant', 0.03),
+            ('sim_blend_center', 0.6), ('sim_slip_speed_regularizer', 0.1),
             # Nominal values from f1tenth_parallel_sim/configs/f1tenth_car.toml.
-            ('mass', 3.718), ('yaw_inertia', 0.0561),
-            ('front_axle_distance', 0.17334), ('rear_axle_distance', 0.14766),
-            ('cg_height', 0.074),
-            ('front_B', 12.0306), ('front_C', 1.71178),
-            ('front_D', 0.402674), ('front_E', 0.0),
-            ('rear_B', 5.06904), ('rear_C', 1.64946),
-            ('rear_D', 0.572528), ('rear_E', 0.0),
+            ('sim_mass', 3.718), ('sim_yaw_inertia', 0.0561),
+            ('sim_front_axle_distance', 0.17334), ('sim_rear_axle_distance', 0.14766),
+            ('sim_cg_height', 0.074),
+            ('sim_front_B', 12.0306), ('sim_front_C', 1.71178),
+            ('sim_front_D', 0.402674), ('sim_front_E', 0.0),
+            ('sim_rear_B', 5.06904), ('sim_rear_C', 1.64946),
+            ('sim_rear_D', 0.572528), ('sim_rear_E', 0.0),
         ):
             self.declare_parameter(name, default)
-        # Noise from the simulator's sysid (configs/sysid.toml): gyro yaw_rate sigma 0.03, odometry speed
-        # sigma 0.15. Q is the sysid parameter covariance (actuator block of fit/20261011-151030, tire block
-        # of fit_clean/20261004-233031) propagated through the model (rate error variance x nominal dt, with
-        # the steering-delay uncertainty as an equivalent steering-command error); x/y/yaw have no parameter
-        # dependence and use the sysid pose sigmas (0.007, 0.006, 0.006).
-        self.declare_parameter('R_imu', [0.1, 0.0009, 1000000.0, 1000000.0])
-        # VESC pose is not fused (huge R): its x/y/yaw are dead-reckoned in a frame with an arbitrary yaw
-        # origin, which would fight the IMU heading. Only its vx, vy and yaw rate are used.
-        self.declare_parameter('R_vesc', [1000000.0, 1000000.0, 1000000.0, 0.0225, 100.0, 0.1])
-        self.declare_parameter('Q', [4.9e-5, 3.6e-5, 3.6e-5, 4.0e-4, 2.6e-3, 0.18, 4.2e-3])
+        # Noise from the simulator's sysid. VESC pose is not fused (huge R): its x/y/yaw are dead-reckoned
+        # in a frame with an arbitrary yaw origin, which would fight the IMU heading.
+        self.declare_parameter('sim_R_imu', [0.1, 0.0009, 1000000.0, 1000000.0])
+        self.declare_parameter('sim_R_vesc', [1000000.0, 1000000.0, 1000000.0, 0.0225, 100.0, 0.1])
+        self.declare_parameter('sim_Q', [4.9e-5, 3.6e-5, 3.6e-5, 4.0e-4, 2.6e-3, 0.18, 4.2e-3])
 
         self.Hz = self.get_parameter('frequency').value
-        self.publish_tf = self.get_parameter('publish_tf').value
-        self.tf_broadcaster = TransformBroadcaster(self) if self.publish_tf else None
+        self.racecar_version = os.environ.get('RACECAR_VERSION', 'NUC6')
+        self.floor = get_remote_parameter(self, 'global_parameters', 'floor', default='dubi')
+
+        self.model_type = self.get_parameter('model_type').value
+        self.ODOM_TOPIC = self.get_parameter('odom_topic').value
+        self.IMU_TOPIC = self.get_parameter('imu_topic').value
+        self.VESC_TOPIC = self.get_parameter('vesc_topic').value
+        self.VIO_TOPIC = self.get_parameter('vio_topic').value
+        
+        self.send_transform = self.get_parameter('send_transform').value
+
+        self.get_logger().info(f"[EKF Node] Racecar is: {self.racecar_version}")
+
+        self.tf_broadcaster = TransformBroadcaster(self)
+
 
         # Get covariance matrices
-        self.R_imu = np.diag(self.get_parameter('R_imu').value)
-        self.R_vesc = np.diag(self.get_parameter('R_vesc').value)
-        self.Q = np.diag(self.get_parameter('Q').value)
+        self.uses_sim_model = self.model_type == "simulator_single_track_model"
+        prefix = 'sim_' if self.uses_sim_model else ''
+        self.R_imu = np.diag(self.get_parameter(prefix + 'R_imu').value)
+        self.R_vesc = np.diag(self.get_parameter(prefix + 'R_vesc').value)
+        self.R_vio = np.diag(self.get_parameter('R_vio').value)
+        q_values = list(self.get_parameter(prefix + 'Q').value)
+        if self.model_type not in ("kinematic_bicycle_model", "simulator_single_track_model") \
+                and len(q_values) == 7:
+            q_values = q_values[0:6]
+        self.Q = np.diag(q_values)
 
-        # Build the model
-        self.model = SimulatorSingleTrackModel(VehicleModelParams(
-            m=self.get_parameter('mass').value,
-            I_z=self.get_parameter('yaw_inertia').value,
-            l_f=self.get_parameter('front_axle_distance').value,
-            l_r=self.get_parameter('rear_axle_distance').value,
-            h_cg=self.get_parameter('cg_height').value,
-            Bf=self.get_parameter('front_B').value,
-            Cf=self.get_parameter('front_C').value,
-            Df=self.get_parameter('front_D').value,
-            Ef=self.get_parameter('front_E').value,
-            Br=self.get_parameter('rear_B').value,
-            Cr=self.get_parameter('rear_C').value,
-            Dr=self.get_parameter('rear_D').value,
-            Er=self.get_parameter('rear_E').value,
-            front_drive_frac=self.get_parameter('front_drive_frac').value,
-            constraint_time_constant=self.get_parameter('constraint_time_constant').value,
-            blend_center=self.get_parameter('blend_center').value,
-            slip_speed_regularizer=self.get_parameter('slip_speed_regularizer').value,
-            steer_gain=self.get_parameter('steer_gain').value,
-            steer_bias=self.get_parameter('steer_bias').value,
-            steer_delay=self.get_parameter('steer_delay').value,
-            steer_latency=self.get_parameter('steer_latency').value,
-            drive_gain=self.get_parameter('drive_gain').value,
-            brake_gain=self.get_parameter('brake_gain').value,
-        ), self.Q)
+        # Get Car Parameters
+        tire_config = load_pacejka_tire_config_ros(self.racecar_version, self.floor)
+        car_config = load_car_config_ros(self.racecar_version)
+        self.get_logger().info(f"[EKF Node] Loaded Config with: {self.racecar_version} and {self.floor}")
+        self.p = {
+            # Tire Parameters
+            'Bf': tire_config.Bf,
+            'Cf': tire_config.Cf,
+            'Df': tire_config.Df,
+            'Ef': tire_config.Ef,
+            'Br': tire_config.Br,
+            'Cr': tire_config.Cr,
+            'Dr': tire_config.Dr,
+            'Er': tire_config.Er,
+            'mu': tire_config.friction_coeff,
+
+            # Car Physical Configs
+            'm': car_config.m,
+            'I_z': car_config.Iz,
+            'l_f': car_config.lf,
+            'l_r': car_config.lr,
+            'h_cg': car_config.h_cg,
+            'wheelbase': car_config.wheelbase
+        }
+
+        # Build the right Model Object
+        if self.model_type == "point_mass_model":
+            self.model = models.point_mass_model(self.Q)
+        elif self.model_type == "kinematic_bicycle_model":
+            self.model = models.kinematic_bicycle_model(self.p, self.Q)
+        elif self.model_type == "single_track_model":
+            self.model = models.single_track_model(self.p, self.Q)
+        elif self.uses_sim_model:
+            self.model = SimulatorSingleTrackModel(self._sim_model_params(), self.Q)
+        else:
+            self.get_logger().warn("[EKF Node] Unknown Model provided. Using point-mass motion model instead")
+            self.model = models.point_mass_model(self.Q)
 
         # Initialize EKF
-        # dim_z is just for initialization (filterpy resizes per update call,
-        # so the same filter takes both the 4-vector IMU and 6-vector VESC updates)
+        # dim_z is just for initializaiton (can change depending on update)
         self.ekf = ExtendedKalmanFilter(dim_x=self.model.dim_x, dim_z=4)
-        self.ekf.x = self.model.x_0
-        self.ekf.P = self.model.P_0
+        self.ekf.x = np.array(self.model.x_0, dtype=float)
+        self.ekf.P = np.array(self.model.P_0, dtype=float)
 
         # Control input array
-        self.ackermann_data = np.zeros(2)  # latest [speed, steer_angle] command
-        # Steering command history; the model is driven by the command as delayed by steer_delay.
-        self.steer_history = CommandDelay(self.get_parameter('steer_delay').value)
+        self.ackermann_data = np.zeros(2)  # [accel, steer_angle]; the simulator model takes [speed, steer_angle]
+        # Steering command history; the simulator model is driven by the command as delayed by steer_delay.
+        self.steer_history = CommandDelay(self.get_parameter('sim_steer_delay').value)
 
         # General stuff
         self.lock = threading.Lock()
         self.last_filter_time = None
         self.is_initialized = False
 
-        # Sensors. Each sensor owns its own subscription, buffering and EKF
-        # update. Adding a new sensor is a single line here.
+        # Commanded velocity deriviation
+        self.last_cmd_vel = 0.0
+        self.last_cmd_time = None
+
+        # Sensors. Each sensor owns its own subscription, buffering and EKF update.
+        # Adding a new sensor is a single line here. VIO shares the full-odometry
+        # measurement model with the VESC.
+        # ``relative=True`` zero-references a sensor to its own first measurement,
+        # so it contributes no absolute origin. The IMU needs it: its heading comes
+        # from the VESC AHRS and shares no reference with the odometry sources.
         self.sensors = [
-            ImuSensor(self, self.get_parameter('imu_topic').value, self.R_imu,
+            ImuSensor(self, self.IMU_TOPIC, self.R_imu,
                       self.model.Hx_imu, self.model.HJacobian_imu,
-                      on_init=self.init_state_from_imu,
-                      alpha=self.get_parameter('imu_accel_alpha').value),
-            OdomSensor(self, 'vesc', self.get_parameter('vesc_topic').value, self.R_vesc,
-                       self.model.Hx_vesc, self.model.HJacobian_vesc),
+                      on_init=self.init_state_from_imu, relative=True),
+            OdomSensor(self, 'vesc', self.VESC_TOPIC, self.R_vesc,
+                       self.model.Hx_vesc, self.model.HJacobian_vesc,
+                       relative=False),
+            OdomSensor(self, 'vio', self.VIO_TOPIC, self.R_vio,
+                       self.model.Hx_vesc, self.model.HJacobian_vesc,
+                       relative=False),
         ]
 
         # Control input subscriptions
-        # The actuation manager's output: the rate/range-limited command the car actually receives,
-        # which is the plant input the model was identified against.
-        self.create_subscription(AckermannDriveStamped, self.get_parameter('cmd_topic').value, self.ackermann_callback, 1)
+        if self.uses_sim_model:
+            # The actuation manager's output: the rate/range-limited command the car actually receives,
+            # which is the plant input the model was identified against.
+            self.create_subscription(AckermannDriveStamped, self.get_parameter('sim_cmd_topic').value,
+                                     self.ackermann_callback, 1)
+        else:
+            self.create_subscription(AckermannDriveStamped, '/drive', self.ackermann_callback, 1)
+            self.create_subscription(AckermannDriveStamped, '/ackermann_cmd', self.ackermann_callback, 1)
 
         # Publisher
-        self.odom_pub = self.create_publisher(Odometry, self.get_parameter('odom_topic').value, 1)
+        self.odom_pub = self.create_publisher(Odometry, self.ODOM_TOPIC, 1)
 
-        # Evaluating computational expenses
+        # Evaulating computational expences
         self.predict_count = 0
         self.predict_mean_ms = 0.0
         self.predict_max_ms = 0.0
@@ -160,40 +209,81 @@ class EkfNode(Node):
 
         self.timer = self.create_timer(1.0 / self.Hz, self.timer_callback)
 
-        self.get_logger().info('[EKF Node] EKF node initialized using the CasADi single-track model (IMU + VESC only).')
+        self.get_logger().info(f"[EKF Node] EKF node initialized sesfully using {self.model_type}")
+
+    def _sim_model_params(self):
+        g = lambda n: self.get_parameter('sim_' + n).value
+        return VehicleModelParams(
+            m=g('mass'), I_z=g('yaw_inertia'), l_f=g('front_axle_distance'), l_r=g('rear_axle_distance'),
+            h_cg=g('cg_height'),
+            Bf=g('front_B'), Cf=g('front_C'), Df=g('front_D'), Ef=g('front_E'),
+            Br=g('rear_B'), Cr=g('rear_C'), Dr=g('rear_D'), Er=g('rear_E'),
+            front_drive_frac=g('front_drive_frac'), constraint_time_constant=g('constraint_time_constant'),
+            blend_center=g('blend_center'), slip_speed_regularizer=g('slip_speed_regularizer'),
+            steer_gain=g('steer_gain'), steer_bias=g('steer_bias'),
+            steer_delay=g('steer_delay'), steer_latency=g('steer_latency'),
+            drive_gain=g('drive_gain'), brake_gain=g('brake_gain'))
 
     def parameter_callback(self, params):
-        self.get_logger().info(f'[EKF Node] Parameters updated: {params}')
+        self.get_logger().info(f"[EKF Node] Parameters updated: {params}")
         result = SetParametersResult()
         result.successful = True  # Assume success by default
         return result
 
     def init_state_from_imu(self, imu_data):
         """Seed the filter state from the first IMU orientation reading."""
-        self.ekf.x[2] = imu_data[0]
-        self.ekf.x[5] = imu_data[1]
-        self.ekf.P[2, 2] = self.R_imu[0, 0]
-        self.ekf.P[5, 5] = self.R_imu[1, 1]
+        if self.model_type in ("single_track_model", "point_mass_model", "simulator_single_track_model"):
+            self.ekf.x[2] = imu_data[0]
+            self.ekf.x[5] = imu_data[1]
+            self.ekf.P[2, 2] = self.R_imu[0][0]
+            self.ekf.P[5, 5] = self.R_imu[1][1]
+        elif self.model_type == "kinematic_bicycle_model":
+            self.ekf.x[4] = imu_data[0]
+            self.ekf.x[5] = imu_data[1]
+            self.ekf.P[4, 4] = self.R_imu[0][0]
+            self.ekf.P[5, 5] = self.R_imu[1][1]
 
-        self.get_logger().info(f'[EKF Node] Initial yaw set to {imu_data[0]}')
-        self.get_logger().info(f'[EKF Node] Initial omega set to {imu_data[1]}')
+        self.get_logger().info(f"[EKF Node] Initial yaw set to {imu_data[0]}")
+        self.get_logger().info(f"[EKF Node] Initial omega set to {imu_data[1]}")
         self.is_initialized = True
 
     # Callbacks
     def ackermann_callback(self, msg):
+        if self.uses_sim_model:
+            with self.lock:
+                self.ackermann_data[0] = msg.drive.speed
+                self.ackermann_data[1] = msg.drive.steering_angle
+                self.steer_history.push(self.get_clock().now().nanoseconds * 1e-9, msg.drive.steering_angle)
+            return
         with self.lock:
-            self.ackermann_data[0] = msg.drive.speed
-            self.ackermann_data[1] = msg.drive.steering_angle
-            self.steer_history.push(self.get_clock().now().nanoseconds * 1e-9, msg.drive.steering_angle)
+            now = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            current_vel = msg.drive.speed
+
+            if self.last_cmd_time is None:
+                calculated_accel = 0.0
+            else:
+                dt = now - self.last_cmd_time
+
+                if dt > 1e-4:
+                    raw_accel = (current_vel - self.last_cmd_vel) / dt
+                    calculated_accel = np.clip(raw_accel, -15.0, 15.0)
+                else:
+                    calculated_accel = self.ackermann_data[0]
+
+            self.last_cmd_vel = current_vel
+            self.last_cmd_time = now
+
+            self.ackermann_data[0] = calculated_accel
+            self.ackermann_data[1] = -msg.drive.steering_angle
 
     # Helper functions
     def shutdown(self):
-        print("--- EKF Performance Report ---")
-        print("**** Predict ****")
+        print(f"--- EKF Performance Report ---")
+        print(f"**** Predict ****")
         print(f"Predict Steps Run: {self.predict_count}")
         print(f"Mean Execution Time: {self.predict_mean_ms:.3f} ms")
         print(f"Peak Execution Time: {self.predict_max_ms:.3f} ms")
-        print("**** Update Total****")
+        print(f"**** Update Total****")
         print(f"Update Steps Run: {self.tot_update_count}")
         print(f"Mean Execution Time: {self.tot_update_mean_ms:.3f} ms")
         print(f"Peak Execution Time: {self.tot_update_max_ms:.3f} ms")
@@ -240,15 +330,11 @@ class EkfNode(Node):
         twist_cov[5, 5] = self.ekf.P[5, 5]
         odom.twist.covariance = twist_cov.flatten().tolist()
 
-        self.odom_pub.publish(odom)
-
-        if not self.publish_tf:
-            return
 
         t = TransformStamped()
         t.header.stamp = odom.header.stamp
-        t.header.frame_id = 'odom'
-        t.child_frame_id = 'base_link'
+        t.header.frame_id = 'odom'  # 'odom'
+        t.child_frame_id = 'base_link'    # 'base_link'
 
         t.transform.translation.x = float(state[0])
         t.transform.translation.y = float(state[1])
@@ -258,7 +344,11 @@ class EkfNode(Node):
         t.transform.rotation.z = float(q[2])
         t.transform.rotation.w = float(q[3])
 
-        self.tf_broadcaster.sendTransform(t)
+        if self.send_transform:
+            self.tf_broadcaster.sendTransform(t)
+
+
+        self.odom_pub.publish(odom)
 
     def timer_callback(self):
         """
@@ -267,32 +357,37 @@ class EkfNode(Node):
         with self.lock:
             # Get snapshot of newest measurement data, cmd inputs, and flags to use in prediction and update steps
             initialized = self.is_initialized
-            speed_cmd = self.ackermann_data[0]
+            u = np.copy(self.ackermann_data)
             snapshots = [(sensor, *sensor.snapshot()) for sensor in self.sensors]
 
         if not initialized:
-            self.get_logger().log("[EKF Node] Initial state not set yet", rclpy.logging.LoggingSeverity.WARN, once=True)
+            self.get_logger().log(f"[EKF Node] Initial state not set yet", rclpy.logging.LoggingSeverity.WARN, once=True)
             return
 
-        self.get_logger().log("[EKF Node] Initial state is set", rclpy.logging.LoggingSeverity.INFO, once=True)
+        self.get_logger().log(f"[EKF Node] Initial state is set", rclpy.logging.LoggingSeverity.INFO, once=True)
         now = self.get_clock().now().nanoseconds / 1e9
         if self.last_filter_time is None:  # first loop
             self.last_filter_time = now
             return
 
         dt = now - self.last_filter_time
-        if dt <= 0.0 or dt > 0.25:
-            self.last_filter_time = now
+        if self.uses_sim_model:
+            if dt <= 0.0 or dt > 0.25:
+                self.last_filter_time = now
+                return
+        elif dt == 0:
             return
         self.last_filter_time = now
 
-        # The model's steering input is the command as delayed by steer_delay: at the middle of the predict
-        # interval for the prediction, at the current time for the measurement updates.
-        with self.lock:
-            steer_pred = self.steer_history.at(now - 0.5 * dt)
-            steer_now = self.steer_history.at(now)
-        u_pred = np.array([speed_cmd, steer_pred])
-        u = np.array([speed_cmd, steer_now])
+        u_pred = u
+        if self.uses_sim_model:
+            # The model's steering input is the command as delayed by steer_delay: at the middle of the
+            # predict interval for the prediction, at the current time for the measurement updates.
+            with self.lock:
+                steer_pred = self.steer_history.at(now - 0.5 * dt)
+                steer_now = self.steer_history.at(now)
+            u_pred = np.array([u[0], steer_pred])
+            u = np.array([u[0], steer_now])
 
         t0 = time.perf_counter_ns()
 

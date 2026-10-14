@@ -41,10 +41,16 @@ class Sensor:
         uses_control:  if True, the control input u is passed to Hx/HJacobian
         angle_idx:     index in the measurement that is an angle (wrapped in the
                        residual), or None if there is no angular measurement
+        relative:      if True, every measurement is re-expressed relative to this
+                       sensor's own first measurement, so it starts at zero and
+                       contributes no absolute reference to the filter. Requires
+                       the subclass to implement ``rebase``.
+        on_init:       optional callable invoked with the first measurement (after
+                       ``rebase``), used to seed the filter state.
     """
 
     def __init__(self, node, name, msg_type, topic, dim, R, Hx, HJacobian,
-                 uses_control=False, angle_idx=None):
+                 uses_control=False, angle_idx=None, relative=False, on_init=None):
         self.node = node
         self.name = name
         self.R = R
@@ -52,9 +58,13 @@ class Sensor:
         self.HJacobian = HJacobian
         self.uses_control = uses_control
         self.angle_idx = angle_idx
+        self.relative = relative
+        self.on_init = on_init
 
         self.data = np.zeros(dim)
         self.fresh = False
+        self._origin = None
+        self._seeded = False
 
         # Performance stats
         self.update_count = 0
@@ -67,9 +77,22 @@ class Sensor:
         """Read ``msg`` into ``self.data``. Called while holding the node lock."""
         raise NotImplementedError
 
+    def rebase(self, data, origin):
+        """Re-express ``data`` in the frame of ``origin``, this sensor's first
+        measurement. Only needed when ``relative=True``."""
+        raise NotImplementedError(
+            f"{self.name}: relative=True but rebase() is not implemented")
+
     def _callback(self, msg):
         with self.node.lock:
             self.parse(msg)
+            if self.relative:
+                if self._origin is None:
+                    self._origin = np.copy(self.data)
+                self.rebase(self.data, self._origin)
+            if not self._seeded and self.on_init is not None:
+                self.on_init(self.data)
+                self._seeded = True
             self.fresh = True
 
     def snapshot(self):
@@ -107,14 +130,14 @@ class ImuSensor(Sensor):
     """
     IMU sensor. Measurement: [yaw, yaw_rate, ax, ay].
 
-    Yaw is relative to the first orientation reading, so the odom frame starts with its x axis along
-    the car's initial heading (as robot_localization's ``imu0_relative`` did). The IMU's absolute yaw
-    is in its own, mounted-rotated frame and would not match the odometry frame. The gyro rate is
-    unaffected by a pure yaw mounting rotation. The accelerations are used as published (their weight
-    in the filter is negligible) and are not rotated into the base frame.
-
     Applies an exponential moving average to the linear accelerations and can
     initialise the filter state from the first orientation reading.
+
+    With ``relative=True`` the yaw is measured against the heading at the first
+    message, which is what you want whenever the IMU's absolute heading has no
+    common reference with the odometry sources: fusing two absolute yaws that
+    differ by a constant offset leaves a residual the filter can never drive to
+    zero. Rates and accelerations are already relative quantities.
 
     Args:
         on_init: optional callable invoked with the parsed measurement on the
@@ -122,15 +145,17 @@ class ImuSensor(Sensor):
         alpha:   EMA weight for the newest acceleration sample.
     """
 
-    def __init__(self, node, topic, R, Hx, HJacobian, on_init=None, alpha=0.2):
+    def __init__(self, node, topic, R, Hx, HJacobian, on_init=None, alpha=0.2,
+                 relative=False):
         super().__init__(node, 'imu', Imu, topic, 4, R, Hx, HJacobian,
-                         uses_control=True, angle_idx=0)
-        self.on_init = on_init
+                         uses_control=True, angle_idx=0, relative=relative,
+                         on_init=on_init)
         self.alpha = alpha
         self.prev_ax = None
         self.prev_ay = None
-        self.yaw0 = None
-        self._initialized = False
+
+    def rebase(self, data, origin):
+        data[0] = normalize_angle(data[0] - origin[0])
 
     def parse(self, msg):
         new_ax = msg.linear_acceleration.x
@@ -151,25 +176,35 @@ class ImuSensor(Sensor):
         q = [msg.orientation.x, msg.orientation.y,
              msg.orientation.z, msg.orientation.w]
         __, __, yaw = tft.euler_from_quaternion(q)
-        yaw = normalize_angle(yaw)
-        if self.yaw0 is None:
-            self.yaw0 = yaw
-        self.data[0] = normalize_angle(yaw - self.yaw0)
-
-        if not self._initialized and self.on_init is not None:
-            self.on_init(self.data)
-            self._initialized = True
+        self.data[0] = normalize_angle(yaw)
 
 
 class OdomSensor(Sensor):
     """
-    Full-state odometry sensor (e.g. VESC).
+    Full-state odometry sensor (e.g. VESC, VIO).
     Measurement: [x, y, yaw, vx, vy, yaw_rate].
+
+    With ``relative=True`` the pose is re-anchored to the first message, so this
+    source stops claiming an absolute origin. Use it when a second sensor already
+    owns the absolute pose: two absolute pose sources anchored at different
+    moments pull the filter apart.
     """
 
-    def __init__(self, node, name, topic, R, Hx, HJacobian, angle_idx=2):
+    def __init__(self, node, name, topic, R, Hx, HJacobian, angle_idx=2,
+                 relative=False):
         super().__init__(node, name, Odometry, topic, 6, R, Hx, HJacobian,
-                         uses_control=False, angle_idx=angle_idx)
+                         uses_control=False, angle_idx=angle_idx,
+                         relative=relative)
+
+    def rebase(self, data, origin):
+        # Rigid re-anchor of the pose into the first sample's frame. The
+        # velocities are body-frame already, so they carry over untouched.
+        dx = data[0] - origin[0]
+        dy = data[1] - origin[1]
+        c, s = np.cos(origin[2]), np.sin(origin[2])
+        data[0] = c * dx + s * dy
+        data[1] = -s * dx + c * dy
+        data[2] = normalize_angle(data[2] - origin[2])
 
     def parse(self, msg):
         self.data[0] = msg.pose.pose.position.x

@@ -118,7 +118,7 @@ unidentifiable.
 - **`single_publisher/commands/motor/speed`** and `.../servo/position` — expect
   exactly one (`ackermann_to_vesc`). See the note below.
 - **`alive/...`** — the seven live data/command topics (including the raw VESC `/odom` and the
-  estimator's `/early_fusion/odom`) are producing messages.
+  estimator's `/state_estimation/odom`) are producing messages.
 
 ## Command path and recorded input
 
