@@ -93,6 +93,13 @@ ros2 launch controller controller_launch.xml mode:=MAP
 
 However we suggest to use the launch files present in the `stack_master package`.
 
+### RL mode (optional)
+`mode:=RL` runs a PPO/RMA policy trained in `f1tenth_parallel_sim`. It needs PyTorch (`make build RL=cpu|gpu`); the classical modes work without it.
+```
+ros2 launch controller controller_launch.xml mode:=RL checkpoint:=/path/to/ckpt.pt device:=cpu direction:=ccw
+```
+It uses `/centerline_waypoints` and `/state_estimation/odom`, and runs at the policy's training control rate.
+
 # Pure Pursuit (PP) controller
 The goal of the Control module within the ForzaETH Race Stack is to enable performant, safe, and consistent lap completions by accurately tracking a trajectory provided by the local planner.
 The velocity and steering commands are managed, respectively, by the longitudinal and lateral controllers.

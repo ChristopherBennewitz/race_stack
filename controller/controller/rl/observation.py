@@ -3,7 +3,7 @@
 import numpy as np
 import torch
 
-from rl_controller.policy import HISTORY_DIM
+from controller.rl.policy import HISTORY_DIM
 
 
 def _signed_area(xy):

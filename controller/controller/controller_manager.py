@@ -1,10 +1,13 @@
+import math
 import os
 import yaml
 import rclpy
 import numpy as np
 from scipy.spatial.transform import Rotation
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.client import Client
+from rclpy.qos import QoSProfile
 from rcl_interfaces.srv import GetParameters
 
 from ament_index_python import get_package_share_directory
@@ -87,6 +90,10 @@ class Controller(Node):
             self.get_logger().info("Initializing FTG controller")
             self.init_ftg_controller()
             self.prioritize_dyn = False
+        elif self.mode == "RL":
+            self.get_logger().info("Initializing RL controller")
+            self.init_rl_controller()
+            self.prioritize_dyn = False
         else:
             self.get_logger().error(f"Invalid mode: {self.mode}")
             return
@@ -107,6 +114,13 @@ class Controller(Node):
             self.car_state_frenet_cb,
             10)  # car frenet coordinates
         self.create_subscription(LaserScan, '/scan', self.scan_cb, 10)  # lidar scan
+
+        if self.mode == "RL":
+            # The policy only needs the centerline and the state estimate: no global-waypoint wait, Frenet
+            # converter or L1 tuning parameters.
+            self.create_timer(1 / self.rate, self.control_loop)
+            self.get_logger().info("Controller ready")
+            return
 
         # Block until relevant data is here
         self.wait_for_messages()
@@ -322,9 +336,39 @@ class Controller(Node):
             range_offset=self.state_machine_range_offset,
             track_width=self.state_machine_track_width)
 
+    def init_rl_controller(self):
+        # torch is an optional dependency, so only import the RL code when this mode is selected.
+        try:
+            from controller.rl.rl_controller import RL_Controller
+        except ImportError as e:
+            raise RuntimeError("RL mode needs PyTorch; build with `make build RL=cpu|gpu`") from e
+
+        checkpoint = self.get_parameter_or('checkpoint', Parameter('checkpoint', value='')).value
+        if not checkpoint:
+            raise ValueError("parameter 'checkpoint' is required in RL mode")
+        device = self.get_parameter_or('device', Parameter('device', value='cpu')).value
+        direction = self.get_parameter_or('direction', Parameter('direction', value='ccw')).value
+        self.rl_max_odom_age = self.get_parameter_or('max_odom_age_s', Parameter('max_odom_age_s', value=0.1)).value
+
+        self.rl_controller = RL_Controller(checkpoint, device, direction, self.get_logger())
+        self.rate = self.rl_controller.control_hz
+        self.odom_msg = None
+
+        # The stack's centerline publisher uses the default (volatile) QoS and republishes every 10 s. A
+        # TRANSIENT_LOCAL subscription is incompatible with a volatile publisher and would never connect, so
+        # use the default reliable/volatile profile, which also matches a latched publisher (without its history).
+        self.create_subscription(WpntArray, '/centerline_waypoints', self.centerline_cb, QoSProfile(depth=1))
+
     #############
     # CALLBACKS #
     #############
+
+    def centerline_cb(self, data: WpntArray):
+        if self.rl_controller.centerline is not None or not data.wpnts:
+            return
+        self.rl_controller.set_centerline(
+            [(w.x_m, w.y_m) for w in data.wpnts], [w.d_left for w in data.wpnts], [w.d_right for w in data.wpnts])
+        self.get_logger().info(f"Received centerline with {len(data.wpnts)} points")
 
     def l1_param_cb(self, parameter_event):
         """
@@ -411,6 +455,9 @@ class Controller(Node):
             self.opponent = None
 
     def odom_cb(self, data: Odometry):
+        if self.mode == "RL":
+            self.odom_msg = data
+            return
         self.speed_now = data.twist.twist.linear.x
         x = data.pose.pose.position.x
         y = data.pose.pose.position.y
@@ -533,6 +580,20 @@ class Controller(Node):
         self.get_logger().warning("[STATE MACHINE] FTGONLY!!!")
         return speed, steer
 
+    def rl_cycle(self):
+        """Returns (speed, steer), or None while the centerline/odometry are missing or stale."""
+        if self.rl_controller.centerline is None or self.odom_msg is None:
+            return None
+        age = (self.get_clock().now() - rclpy.time.Time.from_msg(self.odom_msg.header.stamp)).nanoseconds * 1e-9
+        if age > self.rl_max_odom_age:
+            self.get_logger().warn(f"Stale odometry ({age:.2f}s old); not driving", throttle_duration_sec=1.0)
+            return None
+
+        pose, twist = self.odom_msg.pose.pose, self.odom_msg.twist.twist
+        q = pose.orientation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        return self.rl_controller.main_loop(pose.position.x, pose.position.y, yaw, twist.linear.x, twist.angular.z)
+
     def create_pid_msg(self, should, actual, error, d_value, i_value, input):
         pid_msg = PidData()
         pid_msg.header.stamp = self.get_clock().now().to_msg()
@@ -554,6 +615,11 @@ class Controller(Node):
             speed, steer = self.pp_cycle()
         elif self.mode == "FTG":
             speed, steer = self.ftg_cycle()
+        elif self.mode == "RL":
+            cmd = self.rl_cycle()
+            if cmd is None:
+                return
+            speed, steer = cmd
 
         ack_msg = AckermannDriveStamped()
         ack_msg.header.stamp = self.get_clock().now().to_msg()

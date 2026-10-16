@@ -1,12 +1,18 @@
 <?xml version="1.0"?>
 <launch>
   <arg name="LU_table" default="NUC5_hangar_pacejka"/>
-  <arg name="mode" default="MAP" description="Mode of operation: MAP / PP / (FTG). methods in brackets have not been implemented"/> <!-- TODO implement PP and MAPPING -->
+  <arg name="mode" default="MAP" description="Mode of operation: MAP / PP / RL / (FTG). methods in brackets have not been implemented"/> <!-- TODO implement PP and MAPPING -->
+  <arg name="checkpoint" default="" description="RL mode only: path to a checkpoint saved by f1tenth_parallel_sim scripts/train.py"/>
+  <arg name="device" default="cpu" description="RL mode only: torch device"/>
+  <arg name="direction" default="ccw" description="RL mode only: 'ccw' / 'cw', the driving direction the policy was trained for"/>
 
   <!--  launch L1 controller -->
   <node pkg="controller" name="controller" exec="controller">
       <param name="mode" value="$(var mode)"/>
       <param name="LU_table" value="$(var LU_table)"/>
+      <param name="checkpoint" value="$(var checkpoint)"/>
+      <param name="device" value="$(var device)"/>
+      <param name="direction" value="$(var direction)"/>
   </node>
 
 </launch>

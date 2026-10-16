@@ -1,11 +1,11 @@
-"""Tests for the ROS-free parts of rl_controller."""
+"""Tests for the ROS-free parts of the RL controller (skipped when PyTorch is not installed)."""
 
 import numpy as np
 import pytest
-import torch
+torch = pytest.importorskip("torch")
 
-from rl_controller.observation import Centerline, HistoryBuffer
-from rl_controller.policy import Policy, PolicyShape, load_policy
+from controller.rl.observation import Centerline, HistoryBuffer
+from controller.rl.policy import Policy, PolicyShape, load_policy
 
 ENC = {'hidden': [8], 'embed_dim': 4, 'conv': True, 'conv_channels': 3, 'kernel_size': 5}
 MODEL_CFG = {'mode': 'history', 'pi_layers': [16], 'waypoint': ENC, 'history': ENC}
