@@ -15,11 +15,10 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Joy
 
-from id_controller import containment
 from id_controller import preflight as pf
-from id_controller import takes as takes_lib
-from id_controller.run_take import (BAG_SETTLE_SEC, _actuation_configuration,
-                                    _git, _run_preflight, _write_metadata)
+from id_controller.common import (BAG_SETTLE_SEC, _actuation_configuration,
+                                  _git, _run_preflight, _write_metadata,
+                                  default_bag_directory)
 
 HUMAN_DEADMAN_BUTTON = 4
 JOY_WAIT_SEC = 10.0
@@ -81,7 +80,7 @@ def _keep_recording() -> bool:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("label", nargs="?", default="manual", help="short bag label")
-    ap.add_argument("--out", default=containment.default_bag_directory(),
+    ap.add_argument("--out", default=default_bag_directory(),
                     help="bag directory (default: <race_stack>/sysid_bags)")
     ap.add_argument("--tail", type=float, default=1.0,
                     help="seconds to record after button 4 is released")
@@ -146,7 +145,7 @@ def main() -> None:
         print("no bag was created")
         raise SystemExit(1)
 
-    repo = os.path.dirname(os.path.abspath(takes_lib.__file__))
+    repo = os.path.dirname(os.path.abspath(__file__))
     _write_metadata(bag_dir, {
         "take": f"teleop_{_safe_label(args.label)}",
         "started": stamp,
@@ -165,7 +164,6 @@ def main() -> None:
             "final_motor_erpm": "/commands/motor/speed",
             "final_servo_position": "/commands/servo/position",
         },
-        "containment_enabled": False,
         "note": "Joystick-driven data; fit from /ackermann_cmd_applied.",
     })
 

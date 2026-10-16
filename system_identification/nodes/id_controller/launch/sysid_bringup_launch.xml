@@ -1,9 +1,8 @@
 <!-- -*- mode: XML -*- -->
 <!--
-  Car + SLAM pose, and nothing else. This is the bring-up for safely contained
+  Car + SLAM pose, and nothing else. This is the bring-up for joystick-driven
   identification takes: no racing trajectory, sectors, lap analyser, state
-  machine, or external controller may be in the command path. The take player
-  owns its deliberately loose localization-feedback containment.
+  machine, or external controller may be in the command path.
 
   Two modes:
 
@@ -38,9 +37,6 @@
                       Needs a TTY and a display; set False over a plain ssh." />
     <arg name="rviz" default="False"
          description="Open a focused map, scan, vehicle-pose and TF view." />
-    <arg name="safety_map_yaml"
-         default="$(find-pkg-share stack_master)/maps/$(var map_name)/$(var map_name).yaml"
-         description="Editable occupancy YAML used only by sys-ID containment." />
 
     <!-- car: lidar, VESC, IMU, joystick and physical-unit actuation manager -->
     <include file="$(find-pkg-share stack_master)/launch/teleop_launch.xml">
@@ -54,24 +50,6 @@
         <arg name="map_name" value="$(var map_name)" />
         <arg name="use_sim_time" value="False" />
     </include>
-
-    <!-- A dedicated map topic makes containment deterministic and allows an
-         edited keep-out PNG without changing Cartographer's pbstream. -->
-    <group unless="$(var mapping)">
-        <node pkg="nav2_map_server" name="sysid_safety_map_server"
-              exec="map_server" output="screen">
-            <param name="yaml_filename" value="$(var safety_map_yaml)" />
-            <param name="use_sim_time" value="False" />
-            <remap from="map" to="/sysid/safety_map" />
-            <remap from="map_metadata" to="/sysid/safety_map_metadata" />
-        </node>
-        <node pkg="nav2_lifecycle_manager" name="sysid_safety_map_lifecycle_manager"
-              exec="lifecycle_manager" output="screen">
-            <param name="autostart" value="True" />
-            <param name="node_names" value="[sysid_safety_map_server]" />
-            <param name="use_sim_time" value="False" />
-        </node>
-    </group>
 
     <!-- map saver, mapping mode only: press 'y' in its terminal to write the
          .png/.yaml/.pbstream that localization mode then reads -->

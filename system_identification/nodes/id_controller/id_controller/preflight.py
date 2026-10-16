@@ -6,13 +6,13 @@ Run standalone::
     ros2 run id_controller preflight
     ros2 run id_controller preflight --ros-args -p require_deadman:=False
 
-or let ``run_take`` call it for you. Every check here exists because it has
+or let ``record_teleop`` call it for you. Every check here exists because it has
 silently ruined a recording before:
 
 ``drive_exclusive``
-    Exactly one thing may publish ``/drive`` during a take. The containment
-    controller is inside the take player; a second controller would interleave
-    commands and make the applied input ambiguous.
+    Nothing may publish ``/drive`` during a joystick take; a running controller
+    or state machine would interleave commands and make the applied input
+    ambiguous.
 
 ``teleop_silent``
     Unexpected ``/teleop`` traffic is reported. It cannot override ``/drive``
@@ -56,15 +56,11 @@ BAG_TOPICS = (
     "/commands/motor/speed",
     "/ackermann_cmd_applied",
     "/drive",
-    "/sysid/nominal_cmd",
-    "/sysid/containment_correction",
-    "/sysid/reference_path",
-    "/sysid/safety_map",
     "/teleop",
     "/joy",
 )
-
-#: Topics that must be producing data before a take starts. /drive is ours and
+#: Topics that must be producing data before a take starts. /drive and /teleop
+#: are required to be silent, so neither belongs here.
 #: /teleop is required to be silent, so neither belongs here.
 LIVE_TOPICS = {
     "/car_state/odom": Odometry,
