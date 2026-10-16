@@ -39,7 +39,7 @@ For the simulator-equivalence tests and shared simulator utilities, install the
 CPU-only PyTorch build (the deployed RaceStack never requires CUDA):
 
 ```
-python3 -m pip install -r requirements-cpu.txt
+python3 -m pip install -r .install_utils/torch_cpu_req.txt
 ```
 
 ### Comparing the old and new filters without motion capture

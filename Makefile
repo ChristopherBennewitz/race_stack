@@ -5,6 +5,13 @@
 # Configurable variables (edit as needed)
 CACHE_DIR := ../race_stack_cache/humble
 
+# Optional RL dependencies (PyTorch): none | cpu | gpu
+#   make build RL=cpu   CPU-only wheels (NUC, or sim without a GPU)
+#   make build RL=gpu   CUDA torch (Jetson, or sim with an NVIDIA GPU)
+# On Jetson, RL=gpu needs TORCH_GPU_INDEX_URL set to a JetPack-matching wheel index.
+RL ?= none
+export RL_TORCH := $(RL)
+
 # Phony targets
 .PHONY: \
 	help \
@@ -37,7 +44,8 @@ setup_cache: ## Create cache folder structure
 	@echo "Cache directories ready at $(CACHE_DIR)"
 
 
-build: ## Build the base workspace
+build: ## Build the base workspace (optional: RL=cpu|gpu to include PyTorch)
+	@case "$(RL)" in none|cpu|gpu) ;; *) echo "Invalid RL='$(RL)' (use none, cpu or gpu)"; exit 1;; esac
 	@echo "Detecting system architecture..."
 	@if [ "$$(uname -m)" = "x86_64" ]; then \
 		echo "Building for x86 architecture..."; \

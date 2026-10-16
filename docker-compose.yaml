@@ -3,6 +3,8 @@ x-common-build-settings: &common-build-settings
   pull: false
 
 x-user-args: &user-args
+  RL_TORCH: ${RL_TORCH:-none} # none | cpu | gpu, set via `make build RL=...`
+  TORCH_GPU_INDEX_URL: ${TORCH_GPU_INDEX_URL:-} # only needed for RL=gpu on Jetson
   USER: ${USER}
   UID: ${HOST_UID} # user id must be saved to an environment variable, can be done with `export UID=$(id -u)`
   GID: ${HOST_GID} # group id must be saved to an environment variable, can be done with `export GID=$(id -g)`

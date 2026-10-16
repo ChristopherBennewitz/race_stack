@@ -42,12 +42,13 @@ RUN apt-get update && xargs apt-get install -y < /.install_utils/linux_req.txt
 ADD ./.install_utils/python_req.txt /tmp/.install_utils/python_req.txt
 RUN pip3 install -r /tmp/.install_utils/python_req.txt &&\
     pip3 install quadprog~=0.1.11
-ADD ./requirements-cpu.txt /tmp/requirements-cpu.txt
-# The Jetson image brings its own CUDA build of torch; the CPU wheels are for the NUC and other CPU-only targets.
-RUN if [[ "$PLATFORM" != "jet" ]]; then pip3 install -r /tmp/requirements-cpu.txt; fi
-# Installing torch can bring in a newer setuptools, which breaks ROS 2 Humble's colcon --symlink-install
-# (python_req.txt pins this version for that reason), so pin it again afterwards.
-RUN pip3 install "setuptools==58.2.0"
+# Optional RL dependencies (PyTorch): RL_TORCH=none|cpu|gpu, set via `make build RL=...`
+ARG RL_TORCH=none
+ARG TORCH_GPU_INDEX_URL=
+ADD ./.install_utils/torch_setup.sh /.install_utils/torch_setup.sh
+ADD ./.install_utils/torch_cpu_req.txt /.install_utils/torch_cpu_req.txt
+ADD ./.install_utils/torch_gpu_req.txt /.install_utils/torch_gpu_req.txt
+RUN chmod +x /.install_utils/torch_setup.sh && TORCH_GPU_INDEX_URL="$TORCH_GPU_INDEX_URL" /.install_utils/torch_setup.sh "$RL_TORCH" "$PLATFORM"
 
 ADD ./.install_utils /.install_utils
 RUN useradd -ms /bin/bash -u ${UID} -G sudo ${USER} && groupadd -fg ${GID} ${USER} \

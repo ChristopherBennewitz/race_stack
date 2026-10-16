@@ -1,0 +1,4 @@
+# CPU-only PyTorch. Use PyTorch's CPU index explicitly so pip never selects
+# CUDA wheels or NVIDIA runtime dependencies.
+--index-url https://download.pytorch.org/whl/cpu
+torch

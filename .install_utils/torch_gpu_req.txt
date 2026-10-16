@@ -1,0 +1,3 @@
+# CUDA PyTorch from the default index (x86_64). On Jetson, torch_setup.sh
+# installs from TORCH_GPU_INDEX_URL instead, since PyPI has no Jetson CUDA wheels.
+torch
