@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 torch = pytest.importorskip("torch")
 
-from controller.rl.observation import Centerline, HistoryBuffer
+from controller.rl.observation import Centerline, HistoryBuffer, pose_in_frame
 from controller.rl.policy import Policy, PolicyShape, load_policy
 
 ENC = {'hidden': [8], 'embed_dim': 4, 'conv': True, 'conv_channels': 3, 'kernel_size': 5}
@@ -94,3 +94,23 @@ def test_checkpoint_round_trips_with_weights_only_loading(tmp_path):
     wp, hist = torch.randn(10, 4), torch.randn(6, 4)
     assert torch.allclose(policy(2.0, 0.1, wp, hist), loaded(2.0, 0.1, wp, hist), atol=1e-6)
     assert loaded.shape.control_hz == 40.0
+
+
+def test_pose_in_frame_moves_an_odom_pose_onto_the_map_centerline():
+    # odom sits at (5, 0) in the map, turned a quarter turn; the car is 1 m ahead of the odom origin
+    x, y, yaw = pose_in_frame(1.0, 0.0, 0.0, 5.0, 0.0, np.pi / 2)
+    assert (x, y) == pytest.approx((5.0, 1.0))
+    assert yaw == pytest.approx(np.pi / 2)
+
+
+def test_pose_in_frame_with_an_identity_frame_changes_nothing():
+    assert pose_in_frame(2.0, -1.0, 0.3, 0.0, 0.0, 0.0) == pytest.approx((2.0, -1.0, 0.3))
+
+
+def test_a_pose_in_odom_reaches_the_policy_in_map_coordinates():
+    c = Centerline(circle(), np.full(200, 1.0), np.full(200, 2.0))
+    # in odom the car is at the origin heading +x; the odom frame is the map point (5, 0) turned a quarter turn
+    x, y, yaw = pose_in_frame(0.0, 0.0, 0.0, 5.0, 0.0, np.pi / 2)
+    assert c.nearest(x, y) == 0
+    wp = c.lookahead(x, y, yaw, 3)
+    assert wp[0, 0] > 0 and abs(wp[0, 1]) < 0.2

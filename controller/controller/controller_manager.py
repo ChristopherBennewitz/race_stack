@@ -5,6 +5,7 @@ import rclpy
 import numpy as np
 from scipy.spatial.transform import Rotation
 from rclpy.node import Node
+from tf2_ros import Buffer, TransformException, TransformListener
 from rclpy.parameter import Parameter
 from rclpy.client import Client
 from rclpy.qos import QoSProfile
@@ -43,7 +44,9 @@ class Controller(Node):
         self.map_path = get_remote_parameter(self, 'global_parameters', 'map_path')
         self.racecar_version = get_remote_parameter(self, 'global_parameters', 'racecar_version')
         self.sim = get_remote_parameter(self, 'global_parameters', 'sim')
-        self.state_machine_rate = get_remote_parameter(self, 'state_machine', 'rate_hz')
+        # The RL policy runs without the state machine, which is the only other user of this rate.
+        self.state_machine_rate = (None if self.get_parameter('mode').value == "RL"
+                                   else get_remote_parameter(self, 'state_machine', 'rate_hz'))
 
         # variables
         self.rate = 40
@@ -339,6 +342,7 @@ class Controller(Node):
     def init_rl_controller(self):
         # torch is an optional dependency, so only import the RL code when this mode is selected.
         try:
+            from controller.rl.observation import pose_in_frame
             from controller.rl.rl_controller import RL_Controller
         except ImportError as e:
             raise RuntimeError("RL mode needs PyTorch; build with `make build RL=cpu|gpu`") from e
@@ -350,9 +354,13 @@ class Controller(Node):
         direction = self.get_parameter_or('direction', Parameter('direction', value='ccw')).value
         self.rl_max_odom_age = self.get_parameter_or('max_odom_age_s', Parameter('max_odom_age_s', value=0.1)).value
 
+        self.pose_in_frame = pose_in_frame
         self.rl_controller = RL_Controller(checkpoint, device, direction, self.get_logger())
         self.rate = self.rl_controller.control_hz
         self.odom_msg = None
+        # The state estimate is in the odom frame but the centerline in map: Cartographer's map->odom bridges them.
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
 
         # The stack's centerline publisher uses the default (volatile) QoS and republishes every 10 s. A
         # TRANSIENT_LOCAL subscription is incompatible with a volatile publisher and would never connect, so
@@ -591,8 +599,20 @@ class Controller(Node):
 
         pose, twist = self.odom_msg.pose.pose, self.odom_msg.twist.twist
         q = pose.orientation
+        x, y = pose.position.x, pose.position.y
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-        return self.rl_controller.main_loop(pose.position.x, pose.position.y, yaw, twist.linear.x, twist.angular.z)
+
+        frame = self.odom_msg.header.frame_id
+        if frame and frame != 'map':
+            try:
+                t = self.tf_buffer.lookup_transform('map', frame, rclpy.time.Time()).transform
+            except TransformException as e:
+                self.get_logger().warn(f"No map->{frame} transform yet; not driving: {e}", throttle_duration_sec=1.0)
+                return None
+            r = t.rotation
+            frame_yaw = math.atan2(2.0 * (r.w * r.z + r.x * r.y), 1.0 - 2.0 * (r.y * r.y + r.z * r.z))
+            x, y, yaw = self.pose_in_frame(x, y, yaw, t.translation.x, t.translation.y, frame_yaw)
+        return self.rl_controller.main_loop(x, y, yaw, twist.linear.x, twist.angular.z)
 
     def create_pid_msg(self, should, actual, error, d_value, i_value, input):
         pid_msg = PidData()
