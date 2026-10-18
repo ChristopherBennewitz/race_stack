@@ -37,6 +37,10 @@
                       Needs a TTY and a display; set False over a plain ssh." />
     <arg name="rviz" default="False"
          description="Open a focused map, scan, vehicle-pose and TF view." />
+    <arg name="custom_ekf" default="False"
+         description="True runs state_estimation's python ekf_node, False robot_localization." />
+    <arg name="ekf_model_type" default="simulator_single_track_model"
+         description="Model of the python ekf_node; only read when custom_ekf:=True." />
 
     <!-- car: lidar, VESC, IMU, joystick and physical-unit actuation manager -->
     <include file="$(find-pkg-share stack_master)/launch/teleop_launch.xml">
@@ -49,6 +53,8 @@
         <arg name="mapping_bool" value="$(var mapping)" />
         <arg name="map_name" value="$(var map_name)" />
         <arg name="use_sim_time" value="False" />
+        <arg name="custom_ekf" value="$(var custom_ekf)" />
+        <arg name="ekf_model_type" value="$(var ekf_model_type)" />
     </include>
 
     <!-- map saver, mapping mode only: press 'y' in its terminal to write the
