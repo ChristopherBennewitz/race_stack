@@ -31,6 +31,9 @@ def generate_launch_description():
                             'vesc_topic': LaunchConfiguration('odom_vesc_topic'),
                             'vio_topic': '/basalt/odom',
                             'floor': LaunchConfiguration('floor'),
+                            # robot_localization publishes odom->base_link (publish_tf in ekf.yaml); Cartographer
+                            # (provide_odom_frame = false) needs it to publish map->odom, so this node must too.
+                            'send_transform': True,
                             'R_imu': [0.1, 0.1, 1000000.0, 1000000.0],
                             'R_vesc': [1, 1, 1, 1, 100, 0.1],
                             'R_vio': [0.1, 0.1, 0.1, 0.1, 0.1, 1000000.0],
