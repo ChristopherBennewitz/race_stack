@@ -55,23 +55,23 @@ class EkfNode(Node):
 
         # Parameters of model_type 'simulator_single_track_model'. They live apart from the pbl_config
         # car/tire config and from the shared R/Q above, which are sized for the other models.
-        # Actuator model, fitted by the simulator's sysid (runs/sysid/fit/20261011-151030): the steering
+        # Actuator model, fitted by the simulator's sysid (runs/sysid/fit/20261018-182602): the steering
         # command is delayed by steer_delay, then followed through one lag of steer_latency.
         for name, default in (
             ('sim_cmd_topic', '/ackermann_cmd_applied'),
-            ('sim_steer_gain', 1.6746), ('sim_steer_bias', 0.000807634),
-            ('sim_steer_delay', 0.0871629), ('sim_steer_latency', 0.0338089),
-            ('sim_drive_gain', 3.99169), ('sim_brake_gain', 5.51182),
+            ('sim_steer_gain', 1.44903), ('sim_steer_bias', 0.000568671),
+            ('sim_steer_delay', 0.0517435), ('sim_steer_latency', 0.0311014),
+            ('sim_drive_gain', 8.60186), ('sim_brake_gain', 6.09098),
             ('sim_front_drive_frac', 0.5), ('sim_constraint_time_constant', 0.03),
             ('sim_blend_center', 0.6), ('sim_slip_speed_regularizer', 0.1),
             # Nominal values from f1tenth_parallel_sim/configs/f1tenth_car.toml.
             ('sim_mass', 3.718), ('sim_yaw_inertia', 0.0561),
             ('sim_front_axle_distance', 0.17334), ('sim_rear_axle_distance', 0.14766),
             ('sim_cg_height', 0.074),
-            ('sim_front_B', 12.0306), ('sim_front_C', 1.71178),
-            ('sim_front_D', 0.402674), ('sim_front_E', 0.0),
-            ('sim_rear_B', 5.06904), ('sim_rear_C', 1.64946),
-            ('sim_rear_D', 0.572528), ('sim_rear_E', 0.0),
+            ('sim_front_B', 29.9996), ('sim_front_C', 1.04495),
+            ('sim_front_D', 0.520009), ('sim_front_E', 0.0),
+            ('sim_rear_B', 29.9983), ('sim_rear_C', 1.00017),
+            ('sim_rear_D', 0.643787), ('sim_rear_E', 0.0),
         ):
             self.declare_parameter(name, default)
         # Noise from the simulator's sysid. VESC pose is not fused (huge R): its x/y/yaw are dead-reckoned

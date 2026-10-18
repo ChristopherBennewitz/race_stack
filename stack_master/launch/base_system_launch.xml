@@ -7,6 +7,8 @@
   <arg name="loc_algorithm" default="slam" description="'slam' / 'synpf' to switch localisation algorithm" />
   <arg name="publish_centerline" default="True" description="Publish /centerline_waypoints (needed by rl_controller and the RViz centerline view)" />
   <arg name="rviz" default="False" description="True to open RViz with the map, scan, car pose, centerline and global waypoints" />
+  <arg name="custom_ekf" default="False" description="True runs state_estimation's python ekf_node, False robot_localization" />
+  <arg name="ekf_model_type" default="simulator_single_track_model" description="Model of the python ekf_node; only read when custom_ekf:=True" />
 
   <!-- Note: This is merely the share path (read-only) as the base_system
     is not expected to modify maps in any way. -->
@@ -31,6 +33,8 @@
       <arg name="racecar_version" value="$(var racecar_version)" />
       <arg name="mapping_bool" value="False" />
       <arg name="map_name" value="$(var map_name)" />
+      <arg name="custom_ekf" value="$(var custom_ekf)" />
+      <arg name="ekf_model_type" value="$(var ekf_model_type)" />
     </include>
   </group>
 
