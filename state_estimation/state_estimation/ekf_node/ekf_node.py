@@ -125,30 +125,33 @@ class EkfNode(Node):
             q_values = q_values[0:6]
         self.Q = np.diag(q_values)
 
-        # Get Car Parameters
-        tire_config = load_pacejka_tire_config_ros(self.racecar_version, self.floor)
-        car_config = load_car_config_ros(self.racecar_version)
-        self.get_logger().info(f"[EKF Node] Loaded Config with: {self.racecar_version} and {self.floor}")
-        self.p = {
-            # Tire Parameters
-            'Bf': tire_config.Bf,
-            'Cf': tire_config.Cf,
-            'Df': tire_config.Df,
-            'Ef': tire_config.Ef,
-            'Br': tire_config.Br,
-            'Cr': tire_config.Cr,
-            'Dr': tire_config.Dr,
-            'Er': tire_config.Er,
-            'mu': tire_config.friction_coeff,
+        # Get Car Parameters. The simulator model carries its own (sim_*), so it needs no pbl_config files
+        # (a car without a pacejka/<floor> folder, like NUC2, can still run it).
+        self.p = {}
+        if not self.uses_sim_model:
+            tire_config = load_pacejka_tire_config_ros(self.racecar_version, self.floor)
+            car_config = load_car_config_ros(self.racecar_version)
+            self.get_logger().info(f"[EKF Node] Loaded Config with: {self.racecar_version} and {self.floor}")
+            self.p = {
+                # Tire Parameters
+                'Bf': tire_config.Bf,
+                'Cf': tire_config.Cf,
+                'Df': tire_config.Df,
+                'Ef': tire_config.Ef,
+                'Br': tire_config.Br,
+                'Cr': tire_config.Cr,
+                'Dr': tire_config.Dr,
+                'Er': tire_config.Er,
+                'mu': tire_config.friction_coeff,
 
-            # Car Physical Configs
-            'm': car_config.m,
-            'I_z': car_config.Iz,
-            'l_f': car_config.lf,
-            'l_r': car_config.lr,
-            'h_cg': car_config.h_cg,
-            'wheelbase': car_config.wheelbase
-        }
+                # Car Physical Configs
+                'm': car_config.m,
+                'I_z': car_config.Iz,
+                'l_f': car_config.lf,
+                'l_r': car_config.lr,
+                'h_cg': car_config.h_cg,
+                'wheelbase': car_config.wheelbase
+            }
 
         # Build the right Model Object
         if self.model_type == "point_mass_model":
