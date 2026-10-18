@@ -1,3 +1,4 @@
+from bisect import bisect_right
 from dataclasses import dataclass
 
 import casadi as ca
@@ -365,6 +366,7 @@ class VehicleModelParams:
     steer_latency: float = 0.1
     drive_gain: float = 3.0
     brake_gain: float = 5.0
+    imu_x: float = 0.07  # IMU ahead of base_link (the rear axle), the base_link -> imu static transform
 
     @property
     def wheelbase(self) -> float:
@@ -376,8 +378,11 @@ class CommandDelay:
 
     The simulator delays the steering command by ``steer_delay`` before it reaches the first-order
     steering lag (``BatchedSim._delayed_steer``). The command is a known input, so the EKF does not need
-    delay states: it looks the delayed command up here and feeds it to the model as ``u[1]``. Values are
-    linearly interpolated, held at the newest command, and before the first sample the first value is used.
+    delay states: it looks the delayed command up here and feeds it to the model as ``u[1]``. Commands are
+    piecewise constant (the actuation manager republishes each one on a timer and the sim holds it over
+    the physics substeps), so the lookup holds the last command issued at or before ``t - delay`` rather
+    than interpolating, which would add about half a command period of lag. Before the first sample the
+    first value is used.
     """
 
     def __init__(self, delay: float, horizon: float = 1.0) -> None:
@@ -399,7 +404,8 @@ class CommandDelay:
         """The command in effect at the plant at time ``t``, i.e. the one issued at ``t - delay``."""
         if not self._t:
             return 0.0
-        return float(np.interp(t - self.delay, self._t, self._v))
+        index = bisect_right(self._t, t - self.delay) - 1
+        return self._v[max(index, 0)]
 
 
 def _magic_formula(alpha, B, C, D, E, fz):
@@ -417,6 +423,9 @@ class SimulatorSingleTrackModel:
 
     State x = [x, y, yaw, vx, vy, yaw_rate, steer]
     Control u = [speed_command, steer_command_delayed]
+
+    ``predict`` integrates with RK4 over the step, holding ``u``; call it once per substep for steps
+    over which the delayed steering command changes.
 
     The dynamic/kinematic blending, tire forces, load transfer and
     front-drive force split match the parallel simulator, as does the
@@ -514,7 +523,13 @@ class SimulatorSingleTrackModel:
         ################
         # System Model #
         ################
-        x_next_raw = x_sym + dt * derivatives
+        # Classical RK4 over the predict step with the command held, like the simulator's integrator.
+        xdot = ca.Function('xdot', [x_sym, u_sym], [derivatives])
+        k1 = xdot(x_sym, u_sym)
+        k2 = xdot(x_sym + 0.5 * dt * k1, u_sym)
+        k3 = xdot(x_sym + 0.5 * dt * k2, u_sym)
+        k4 = xdot(x_sym + dt * k3, u_sym)
+        x_next_raw = x_sym + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
         x_next = ca.vertcat(
             x_next_raw[0], x_next_raw[1], _wrap_angle(x_next_raw[2]),
             x_next_raw[3], x_next_raw[4], x_next_raw[5], x_next_raw[6],
@@ -525,8 +540,11 @@ class SimulatorSingleTrackModel:
         #####################
         # Measurement Model #
         #####################
-        ax = derivatives[3] - yaw_rate * vy
-        ay = derivatives[4] + yaw_rate * vx
+        # Accelerations at the IMU, imu_x - l_r ahead of the CoG along the body x axis: imu_transformer only
+        # rotates them into base_link, it does not move them to another point.
+        r_imu = p.imu_x - p.l_r
+        ax = derivatives[3] - yaw_rate * vy - yaw_rate**2 * r_imu
+        ay = derivatives[4] + yaw_rate * vx + derivatives[5] * r_imu
         h_imu_sym = ca.vertcat(yaw, yaw_rate, ax, ay)
         _h_imu = ca.Function('h_imu', [x_sym, u_sym], [h_imu_sym])
         _H_imu = ca.Function('H_imu', [x_sym, u_sym], [ca.jacobian(h_imu_sym, x_sym)])

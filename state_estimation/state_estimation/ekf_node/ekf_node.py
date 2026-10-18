@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import math
 import os
 import threading
 import time
@@ -18,7 +19,8 @@ from tf2_ros import TransformBroadcaster
 
 from . import models
 from .models import CommandDelay, SimulatorSingleTrackModel, VehicleModelParams
-from .sensors import ImuSensor, OdomSensor
+from .prediction_history import PredictionHistory
+from .sensors import ImuSensor, OdomSensor, SlamSpeedSensor
 
 
 class EkfNode(Node):
@@ -74,7 +76,23 @@ class EkfNode(Node):
             self.declare_parameter(name, default)
         # Noise from the simulator's sysid. VESC pose is not fused (huge R): its x/y/yaw are dead-reckoned
         # in a frame with an arbitrary yaw origin, which would fight the IMU heading.
-        self.declare_parameter('sim_R_imu', [0.1, 0.0009, 1000000.0, 1000000.0])
+        # The IMU accelerations are fused so the speed is not carried by the command model alone. The accelerometer
+        # follows the car through a first-order lag of sim_imu_accel_lag (the sensor's low-pass), so it is fused raw
+        # (no EMA, which would add lag) against the predicted acceleration passed through that lag. R and the lag
+        # are fitted on the long drives of data/sysid_20261011 against d(vesc speed)/dt and v * yaw_rate at the IMU
+        # (sysid/latency.py); sim_imu_accel_bias is the constant offset those fits leave (mounting tilt).
+        self.declare_parameter('sim_R_imu', [0.1, 0.0009, 1.4, 3.0])
+        self.declare_parameter('sim_imu_accel_bias', [0.05, 0.56])
+        self.declare_parameter('sim_imu_accel_lag', 0.05)
+        self.declare_parameter('sim_imu_x', 0.07)
+        # Forward speed from the SLAM pose (/car_state/pose), one sample per window, compared with the speed
+        # estimate over the same window shifted by sim_slam_pose_delay (how far the pose stamps lag the car).
+        self.declare_parameter('sim_slam_speed_topic', '/car_state/pose')
+        self.declare_parameter('sim_slam_speed_window', 0.2)
+        self.declare_parameter('sim_slam_pose_delay', 0.045)
+        self.declare_parameter('sim_R_slam_speed', [0.04])
+        self.declare_parameter('sim_slam_speed_gate', 3.0)
+        self.declare_parameter('sim_predict_substep', 0.005)
         self.declare_parameter('sim_R_vesc', [1000000.0, 1000000.0, 1000000.0, 0.0225, 100.0, 0.1])
         self.declare_parameter('sim_Q', [4.9e-5, 3.6e-5, 3.6e-5, 4.0e-4, 2.6e-3, 0.18, 4.2e-3])
 
@@ -171,10 +189,16 @@ class EkfNode(Node):
         # ``relative=True`` zero-references a sensor to its own first measurement,
         # so it contributes no absolute origin. The IMU needs it: its heading comes
         # from the VESC AHRS and shares no reference with the odometry sources.
+        self.prediction_history = PredictionHistory(self.get_parameter('sim_imu_accel_lag').value)
+        if self.uses_sim_model:
+            imu = ImuSensor(self, self.IMU_TOPIC, self.R_imu, self._lagged_imu_measurement,
+                            self.model.HJacobian_imu, on_init=self.init_state_from_imu, relative=True,
+                            alpha=1.0, accel_bias=self.get_parameter('sim_imu_accel_bias').value)
+        else:
+            imu = ImuSensor(self, self.IMU_TOPIC, self.R_imu, self.model.Hx_imu, self.model.HJacobian_imu,
+                            on_init=self.init_state_from_imu, relative=True)
         self.sensors = [
-            ImuSensor(self, self.IMU_TOPIC, self.R_imu,
-                      self.model.Hx_imu, self.model.HJacobian_imu,
-                      on_init=self.init_state_from_imu, relative=True),
+            imu,
             OdomSensor(self, 'vesc', self.VESC_TOPIC, self.R_vesc,
                        self.model.Hx_vesc, self.model.HJacobian_vesc,
                        relative=False),
@@ -182,6 +206,13 @@ class EkfNode(Node):
                        self.model.Hx_vesc, self.model.HJacobian_vesc,
                        relative=False),
         ]
+        if self.uses_sim_model:
+            self.sensors.append(SlamSpeedSensor(
+                self, self.get_parameter('sim_slam_speed_topic').value,
+                np.diag(self.get_parameter('sim_R_slam_speed').value), self.prediction_history,
+                self.get_parameter('sim_slam_speed_window').value,
+                self.get_parameter('sim_slam_pose_delay').value,
+                self.get_parameter('sim_slam_speed_gate').value, self.model.dim_x))
 
         # Control input subscriptions
         if self.uses_sim_model:
@@ -211,6 +242,13 @@ class EkfNode(Node):
 
         self.get_logger().info(f"[EKF Node] EKF node initialized sesfully using {self.model_type}")
 
+    def _lagged_imu_measurement(self, x, u):
+        """IMU prediction with the accelerations as the accelerometer reports them, i.e. through its lag."""
+        h = self.model.Hx_imu(x, u)
+        if self.prediction_history.accel is not None:
+            h[2:] = self.prediction_history.accel
+        return h
+
     def _sim_model_params(self):
         g = lambda n: self.get_parameter('sim_' + n).value
         return VehicleModelParams(
@@ -222,7 +260,7 @@ class EkfNode(Node):
             blend_center=g('blend_center'), slip_speed_regularizer=g('slip_speed_regularizer'),
             steer_gain=g('steer_gain'), steer_bias=g('steer_bias'),
             steer_delay=g('steer_delay'), steer_latency=g('steer_latency'),
-            drive_gain=g('drive_gain'), brake_gain=g('brake_gain'))
+            drive_gain=g('drive_gain'), brake_gain=g('brake_gain'), imu_x=g('imu_x'))
 
     def parameter_callback(self, params):
         self.get_logger().info(f"[EKF Node] Parameters updated: {params}")
@@ -379,20 +417,22 @@ class EkfNode(Node):
             return
         self.last_filter_time = now
 
-        u_pred = u
+        # The simulator model integrates with RK4 in substeps, each driven by the steering command as delayed by
+        # steer_delay at the middle of that substep; the measurement updates use the command at the current time.
+        predict_inputs = [(dt, u)]
         if self.uses_sim_model:
-            # The model's steering input is the command as delayed by steer_delay: at the middle of the
-            # predict interval for the prediction, at the current time for the measurement updates.
+            substeps = max(1, math.ceil(dt / self.get_parameter('sim_predict_substep').value))
+            h = dt / substeps
             with self.lock:
-                steer_pred = self.steer_history.at(now - 0.5 * dt)
-                steer_now = self.steer_history.at(now)
-            u_pred = np.array([u[0], steer_pred])
-            u = np.array([u[0], steer_now])
+                predict_inputs = [(h, np.array([u[0], self.steer_history.at(now - dt + (k + 0.5) * h)]))
+                                  for k in range(substeps)]
+                u = np.array([u[0], self.steer_history.at(now)])
 
         t0 = time.perf_counter_ns()
 
         # predict
-        self.model.predict(ekf=self.ekf, dt=dt, u=u_pred)
+        for step, u_step in predict_inputs:
+            self.model.predict(ekf=self.ekf, dt=step, u=u_step)
 
         t1 = time.perf_counter_ns()
         duration_ms = (t1 - t0) / 1_000_000.0
@@ -415,6 +455,9 @@ class EkfNode(Node):
 
         self.tot_update_count += 1
         self.tot_update_mean_ms += (duration_ms - self.tot_update_mean_ms) / self.tot_update_count
+
+        if self.uses_sim_model:
+            self.prediction_history.record(now, self.ekf.x[3], self.model.Hx_imu(self.ekf.x, u)[2:])
 
         self.publish_odometry()
 

@@ -30,9 +30,10 @@ $\delta_{\mathrm{cmd}}$ is the commanded steering angle (Ackermann
 (`cmd_topic`) -- the plant input the model was identified against, not the raw
 `/drive` request. The steering entry of $\mathbf u$ is the command **as delayed by**
 $T_d$ (`steer_delay`): the node keeps a time-stamped history of the commands
-(`CommandDelay`) and looks up the one issued $T_d$ earlier (linear interpolation, held
-at the newest), at the middle of the predict interval for the prediction and at the
-current time for the measurement updates. The command is a known input, so this is exact
+(`CommandDelay`) and looks up the one in effect $T_d$ earlier: the last command issued at
+or before $t-T_d$, held (the commands are piecewise constant, so interpolating would add
+about half a command period of lag). The prediction looks it up at the middle of each
+integration substep (§4), the measurement updates at the current time. The command is a known input, so this is exact
 and needs no delay states; it mirrors the simulator's `BatchedSim._delayed_steer`.
 The drive effort per unit mass $a$ used below is *derived* from the state and
 $v_{\mathrm{cmd}}$ by the speed loop of §3; it is a force request
@@ -153,18 +154,29 @@ $$
 
 ## 4. Discretization and prediction
 
-Forward Euler with the measured wall-clock step $\mathrm{d}t$ (nominally
+Classical RK4 with the measured wall-clock step $\mathrm{d}t$ (nominally
 $1/100\,\mathrm{s}$; ticks with $\mathrm{d}t \le 0$ or $> 0.25\,\mathrm{s}$ are
-skipped):
+skipped), holding $\mathbf u$ over the step like the simulator's integrator:
 
 $$
-f(\mathbf{x},\mathbf{u},\mathrm{d}t) = \mathbf{x} + \mathrm{d}t\, f_c(\mathbf{x},\mathbf{u}),
+f(\mathbf{x},\mathbf{u},\mathrm{d}t) = \mathbf{x} + \tfrac{\mathrm{d}t}{6}\,(k_1 + 2k_2 + 2k_3 + k_4),
 \quad\text{with } \psi \leftarrow \operatorname{atan2}(\sin\psi,\cos\psi)
+$$
+
+$$
+k_1 = f_c(\mathbf{x},\mathbf{u}),\;
+k_2 = f_c(\mathbf{x}+\tfrac{\mathrm{d}t}{2}k_1,\mathbf{u}),\;
+k_3 = f_c(\mathbf{x}+\tfrac{\mathrm{d}t}{2}k_2,\mathbf{u}),\;
+k_4 = f_c(\mathbf{x}+\mathrm{d}t\,k_3,\mathbf{u})
 $$
 
 $$
 F(\mathbf{x},\mathbf{u},\mathrm{d}t) = \frac{\partial f}{\partial \mathbf{x}} \quad \text{(exact, via } \texttt{ca.jacobian}\text{)}
 $$
+
+The node splits each tick into substeps of at most `sim_predict_substep` (5 ms) and runs the
+prediction below once per substep, each with its own delayed steering command (the command
+can change within a tick), covariance growth $Q\,h$ per substep of length $h$.
 
 Prediction step:
 
@@ -200,7 +212,8 @@ unchanged (the sysid pose sigmas describe SLAM, not VESC odometry).
 ## 5. Measurement models
 
 **IMU** (`/sensors/imu/raw`, 4-dimensional), after an EMA on the accelerometer
-channel with weight $\alpha$ = `imu_accel_alpha` ($\tilde a_k = \alpha a_k + (1-\alpha)\tilde a_{k-1}$):
+channel with weight $\alpha$ = `imu_accel_alpha` ($\tilde a_k = \alpha a_k + (1-\alpha)\tilde a_{k-1}$; $\alpha = 1$, i.e. no
+EMA, for the simulator model, see below):
 
 $$
 \mathbf{z}_{\mathrm{imu}} = \begin{bmatrix}\psi_m & \omega_m & \tilde a_{x,m} & \tilde a_{y,m}\end{bmatrix}^\top,
@@ -214,17 +227,27 @@ kinematic/dynamic mix is active. $H_{\mathrm{imu}} = \partial h_{\mathrm{imu}}/\
 CasADi-exact.
 
 $$
-R_{\mathrm{imu}} = \operatorname{diag}(\sigma_\psi^2,\sigma_\omega^2,\sigma_{a_x}^2,\sigma_{a_y}^2), \quad \text{default } \operatorname{diag}(0.1,\,9\mathrm{e}{-4},\,10^6,\,10^6)
+R_{\mathrm{imu}} = \operatorname{diag}(\sigma_\psi^2,\sigma_\omega^2,\sigma_{a_x}^2,\sigma_{a_y}^2), \quad \text{default } \operatorname{diag}(0.1,\,9\mathrm{e}{-4},\,1.4,\,3.0)
 $$
 
-The acceleration variance is deliberately enormous: $a_x,a_y$ contribute
-negligible correction weight and exist as a held-out consistency channel
-(see `ekf_compare_launch.py`/`ekf_benchmark_node.py`), not a correction
-source. The yaw measurement $\psi_m$ is the IMU orientation yaw **relative to its first
+The predicted accelerations are taken **at the IMU**, $r = $ `sim_imu_x` $- l_r$ ahead of the CoG
+(`sim_imu_x` = 0.07 m, the `base_link -> imu` static transform; `base_link` is the rear axle):
+$a_x \leftarrow a_x - \omega^2 r$, $a_y \leftarrow a_y + \dot\omega\, r$. `imu_transformer` only rotates the
+sensor's 90°-yawed frame into `base_link`; it does not move the measurement to another point.
+
+The accelerometer reports the acceleration through a first-order lag of about
+`sim_imu_accel_lag` = 50 ms (the sensor's own low-pass; fitted with `sysid/latency.py` against
+$\mathrm{d}v/\mathrm{d}t$ of the VESC speed and $v\omega$ from the gyro: 30–50 ms on $a_x$, 65–70 ms on $a_y$).
+So for the simulator model it is fused **raw** (no EMA, which would add another ~75 ms) and compared with
+the predicted acceleration passed through the same lag, kept by `PredictionHistory`; the innovation is
+applied to the present state through the present Jacobian. The variances $\sigma_{a_x}^2 = 1.4$,
+$\sigma_{a_y}^2 = 3.0$ are the residuals of those fits (the raw accelerometer carries 0.6–1.5 m/s² of
+vibration), and `sim_imu_accel_bias` = $(0.05, 0.56)$ m/s² is the constant mounting offset they leave.
+The yaw measurement $\psi_m$ is
+the IMU orientation yaw **relative to its first
 sample** (the IMU's absolute yaw is in its own, mounted-rotated frame), so the odom frame
 starts with its $x$ axis along the car's initial heading and matches the VESC odometry
-frame. The accelerations are used as published and not rotated into the base frame (their
-weight is negligible). The first IMU message also seeds the filter:
+frame. The first IMU message also seeds the filter:
 $\hat x_2 \leftarrow \psi_m,\ \hat x_5 \leftarrow \omega_m,\ P_{22}\leftarrow R_{\mathrm{imu},00},\ P_{55}\leftarrow R_{\mathrm{imu},11}$;
 the node does not run `predict`/`update` at all before this happens.
 
@@ -248,6 +271,19 @@ integrates $x, y, \psi$ from zero in its own frame, which would fight the IMU he
 filter's own integration of $v_x$ along it. Only $v_x, v_y, \omega$ are used from this sensor.
 The pose comes from integrating velocity along the IMU-derived heading; Cartographer
 corrects it.
+
+**SLAM forward speed** (`/car_state/pose`, 1-dimensional). The map-frame pose from TF is differenced over
+consecutive, non-overlapping windows of `sim_slam_speed_window` (0.2 s; `TrailingSpeedWindow`): the
+displacement along the mean heading divided by the window, i.e. the mean speed over
+$[t_0, t_1]$ in pose-stamp time. The pose stamps lag the car by `sim_slam_pose_delay` = 45 ms (the window
+speed at its mid-stamp still trails the VESC speed by that much, `sysid/latency.py`), so the sample is
+compared with the filter's own mean speed estimate over $[t_0 - 45\,\mathrm{ms},\, t_1 - 45\,\mathrm{ms}]$
+from `PredictionHistory`, not with the present speed. Its Jacobian is the $v_x$ selector and
+$R_{\mathrm{slam}} = 0.04$. The sample is applied once per window (5 Hz), which re-grounds $v_x$
+against wheel-speed scale error and slip without letting SLAM dominate the 50 Hz VESC speed. A sample whose
+normalized innovation exceeds `sim_slam_speed_gate` (3 standard deviations) is dropped, which keeps
+scan-matching jumps and loop closures out. The localization is fed this filter's own odometry, so on short
+windows its speed largely echoes the filter; the long window and the large $R$ keep that feedback weak.
 
 ## 6. Sequential update
 

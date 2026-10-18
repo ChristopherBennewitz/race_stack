@@ -113,44 +113,25 @@ Visualization Manager:
         Value: /sysid/safety_map_updates
       Use Timestamp: false
       Value: true
-    - Angle Tolerance: 0.05
-      Class: rviz_default_plugins/Odometry
-      Covariance:
-        Orientation:
-          Alpha: 0.3
-          Color: 255; 255; 127
-          Color Style: Unique
-          Frame: Local
-          Offset: 1
-          Scale: 1
-          Value: false
-        Position:
-          Alpha: 0.3
-          Color: 204; 51; 204
-          Scale: 1
-          Value: false
-        Value: false
+    - Alpha: 1
+      Axes Length: 0.35
+      Axes Radius: 0.025
+      Class: rviz_default_plugins/Pose
+      Color: 40; 220; 80
       Enabled: true
-      Keep: 50
+      Head Length: 0.18
+      Head Radius: 0.08
       Name: Car Pose
-      Position Tolerance: 0.02
-      Shape:
-        Alpha: 1
-        Axes Length: 0.35
-        Axes Radius: 0.025
-        Color: 40; 220; 80
-        Head Length: 0.18
-        Head Radius: 0.08
-        Shaft Length: 0.35
-        Shaft Radius: 0.04
-        Value: Arrow
+      Shaft Length: 0.35
+      Shaft Radius: 0.04
+      Shape: Arrow
       Topic:
         Depth: 10
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Best Effort
-        Value: /car_state/odom
+        Value: /car_state/pose
       Value: true
     - Class: rviz_default_plugins/Axes
       Enabled: true

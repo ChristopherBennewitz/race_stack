@@ -35,7 +35,7 @@ ros2 launch id_controller sysid_bringup_launch.xml \
   mapping:=False map_name:=room5x5 rviz:=True
 ```
 
-Its fixed frame is `map`; it overlays `/scan` on Cartographer's `/map`, draws `/car_state/odom` as an arrow, shows marks `base_link`, and exposes the TF tree.
+Its fixed frame is `map`; it overlays `/scan` on Cartographer's `/map`, draws `/car_state/pose` as an arrow, shows marks `base_link`, and exposes the TF tree.
 Before recording, drive slowly and check that the laser points remain on the
 walls, the arrow moves and turns in the correct direction, returning to the
 same physical spot returns to the same map pose, and no discontinuous jumps
@@ -79,8 +79,9 @@ unidentifiable.
   SI-unit command that actually proceeds to conversion.
 - **`single_publisher/commands/motor/speed`** and `.../servo/position` — expect
   exactly one (`ackermann_to_vesc`).
-- **`alive/...`** — the live data/command topics (including the raw VESC `/odom` and the
-  estimator's odometry) are producing messages.
+- **`alive/...`** — the live data/command topics (the raw VESC `/odom`, the IMU, the lidar
+  `/scan`, the SLAM pose `/car_state/pose` and the estimator's `/state_estimation/odom`) are
+  producing messages.
 
 ## Command path and recorded input
 

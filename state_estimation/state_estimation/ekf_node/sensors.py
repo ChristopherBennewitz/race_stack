@@ -10,8 +10,11 @@ import time
 
 import numpy as np
 import tf_transformations as tft
+from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
+
+from .speed_window import TrailingSpeedWindow
 
 
 def normalize_angle(x):
@@ -143,14 +146,17 @@ class ImuSensor(Sensor):
         on_init: optional callable invoked with the parsed measurement on the
                  first message, used to seed the filter state.
         alpha:   EMA weight for the newest acceleration sample.
+        accel_bias: constant [ax, ay] offset (m/s^2) of the sensor (mounting tilt), subtracted before
+                 the moving average.
     """
 
     def __init__(self, node, topic, R, Hx, HJacobian, on_init=None, alpha=0.2,
-                 relative=False):
+                 relative=False, accel_bias=(0.0, 0.0)):
         super().__init__(node, 'imu', Imu, topic, 4, R, Hx, HJacobian,
                          uses_control=True, angle_idx=0, relative=relative,
                          on_init=on_init)
         self.alpha = alpha
+        self.accel_bias = accel_bias
         self.prev_ax = None
         self.prev_ay = None
 
@@ -158,8 +164,8 @@ class ImuSensor(Sensor):
         data[0] = normalize_angle(data[0] - origin[0])
 
     def parse(self, msg):
-        new_ax = msg.linear_acceleration.x
-        new_ay = msg.linear_acceleration.y
+        new_ax = msg.linear_acceleration.x - self.accel_bias[0]
+        new_ay = msg.linear_acceleration.y - self.accel_bias[1]
 
         if self.prev_ax is not None:
             self.data[2] = self.alpha * new_ax + (1 - self.alpha) * self.prev_ax
@@ -219,3 +225,63 @@ class OdomSensor(Sensor):
              msg.pose.pose.orientation.w]
         __, __, yaw = tft.euler_from_quaternion(q)
         self.data[2] = yaw
+
+
+class SlamSpeedSensor(Sensor):
+    """
+    Forward speed from the SLAM pose, to re-ground the speed state against the wheel odometry.
+
+    Measurement: [v], the mean forward speed over a window of poses (see ``TrailingSpeedWindow``). The pose
+    stamps run ``pose_delay`` behind the car, so the window describes ``[t0 - pose_delay, t1 - pose_delay]``
+    and is compared with the filter's mean speed estimate over that span (``PredictionHistory``). Samples
+    whose innovation exceeds ``gate`` standard deviations are dropped, so a scan-matching jump or loop
+    closure does not drag the speed.
+
+    The localization is fed the EKF's own odometry, so on short windows its speed mostly echoes the filter;
+    keep ``window`` long enough for scan matching to dominate and ``R`` large.
+
+    Args:
+        history:    the filter's ``PredictionHistory``
+        window:     pose window, seconds
+        pose_delay: how far the pose stamps lag the car, seconds
+        gate:       innovation gate, standard deviations
+        dim_x:      filter state dimension (forward speed is state 3)
+    """
+
+    def __init__(self, node, topic, R, history, window, pose_delay, gate, dim_x):
+        H = np.zeros((1, dim_x))
+        H[0, 3] = 1.0
+        super().__init__(node, 'slam_speed', PoseStamped, topic, 3, R,
+                         lambda x: np.array([self._predicted]), lambda x: H)
+        self.history = history
+        self.pose_delay = pose_delay
+        self.gate = gate
+        self.rejected = 0
+        self._predicted = 0.0
+        self._tracker = TrailingSpeedWindow(window)
+
+    def _callback(self, msg):
+        q = msg.pose.orientation
+        __, __, yaw = tft.euler_from_quaternion([q.x, q.y, q.z, q.w])
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        with self.node.lock:
+            sample = self._tracker.push(stamp, msg.pose.position.x, msg.pose.position.y, yaw)
+            if sample is not None:
+                speed, duration = sample
+                self.data[:] = (speed, stamp - duration, stamp)
+                self.fresh = True
+
+    def update(self, ekf, z, u):
+        speed, t0, t1 = z
+        predicted = self.history.mean_vx(t0 - self.pose_delay, t1 - self.pose_delay)
+        if predicted is None:
+            return
+        self._predicted = predicted
+        z = np.array([speed])
+        H = self.HJacobian(ekf.x)
+        S = H @ ekf.P @ H.T + self.R
+        innovation = z - self.Hx(ekf.x)
+        if float(innovation @ np.linalg.solve(S, innovation)) > self.gate ** 2:
+            self.rejected += 1
+            return
+        super().update(ekf, z, u)

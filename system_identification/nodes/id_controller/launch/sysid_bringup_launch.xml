@@ -43,7 +43,7 @@
         <arg name="racecar_version" value="$(var racecar_version)" />
     </include>
 
-    <!-- EKF early fusion + cartographer + carstate (publishes /car_state/odom) -->
+    <!-- state estimator (/state_estimation/odom) + cartographer + carstate (publishes /car_state/pose) -->
     <include file="$(find-pkg-share state_estimation)/launch/state_estimation_launch.xml">
         <arg name="racecar_version" value="$(var racecar_version)" />
         <arg name="mapping_bool" value="$(var mapping)" />

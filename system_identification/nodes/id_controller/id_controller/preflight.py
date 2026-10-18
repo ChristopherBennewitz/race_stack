@@ -36,22 +36,28 @@ from __future__ import annotations
 
 import rclpy
 from ackermann_msgs.msg import AckermannDriveStamped
+from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from sensor_msgs.msg import Imu, Joy
+from sensor_msgs.msg import Imu, Joy, LaserScan
 from std_msgs.msg import Float64
 
 #: Topics that must be in every take's bag for command and response reconstruction.
-#: /odom is the raw VESC odometry and /early_fusion/odom the state estimator's output (the
-#: EKF's inputs and result, for replay); /sensors/core is the VESC's measured erpm, current and
-#: voltage; /tf_static carries the IMU mounting.
+#: The fit reads only raw measurements, never a filter that embeds the model being identified:
+#: /odom is the VESC odometry (measured erpm as speed), /sensors/core the VESC's measured erpm,
+#: current and voltage, /sensors/imu/raw the IMU, /car_state/pose the SLAM pose (TF map -> base_link).
+#: /scan and /tf let SLAM be re-run offline (Cartographer is fed the state estimator's odometry, so
+#: its live pose is not independent of it). /state_estimation/odom is the state estimator's output,
+#: kept for EKF replay and latency checks only. /tf_static carries the IMU and lidar mounting.
 BAG_TOPICS = (
-    "/car_state/odom",
+    "/car_state/pose",
     "/odom",
-    "/early_fusion/odom",
+    "/state_estimation/odom",
     "/sensors/core",
-    "/tf_static",
     "/sensors/imu/raw",
+    "/scan",
+    "/tf",
+    "/tf_static",
     "/commands/servo/position",
     "/commands/motor/speed",
     "/ackermann_cmd_applied",
@@ -63,10 +69,11 @@ BAG_TOPICS = (
 #: are required to be silent, so neither belongs here.
 #: /teleop is required to be silent, so neither belongs here.
 LIVE_TOPICS = {
-    "/car_state/odom": Odometry,
+    "/car_state/pose": PoseStamped,
     "/odom": Odometry,
-    "/early_fusion/odom": Odometry,
+    "/state_estimation/odom": Odometry,
     "/sensors/imu/raw": Imu,
+    "/scan": LaserScan,
     "/commands/servo/position": Float64,
     "/commands/motor/speed": Float64,
     "/ackermann_cmd_applied": AckermannDriveStamped,

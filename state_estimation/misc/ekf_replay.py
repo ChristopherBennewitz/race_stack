@@ -28,6 +28,8 @@ from rosbags.typesys.msg import get_types_from_msg
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from state_estimation.ekf_node.models import CommandDelay, SimulatorSingleTrackModel, VehicleModelParams  # noqa: E402
+from state_estimation.ekf_node.prediction_history import PredictionHistory  # noqa: E402
+from state_estimation.ekf_node.speed_window import TrailingSpeedWindow  # noqa: E402
 
 # Node defaults (ekf_node.py).
 PARAMS = VehicleModelParams(
@@ -37,10 +39,17 @@ PARAMS = VehicleModelParams(
     drive_gain=3.99169, brake_gain=5.51182,
 )
 Q = np.diag([4.9e-5, 3.6e-5, 3.6e-5, 4.0e-4, 2.6e-3, 0.18, 4.2e-3])
-R_IMU = np.diag([0.1, 0.0009, 1e6, 1e6])
+R_IMU = np.diag([0.1, 0.0009, 1.4, 3.0])
+R_IMU_NO_ACCEL = np.diag([0.1, 0.0009, 1e6, 1e6])
+IMU_ACCEL_BIAS = np.array([0.05, 0.56])
+IMU_ACCEL_LAG = 0.05
+R_SLAM_SPEED = np.diag([0.04])
+SLAM_SPEED_WINDOW = 0.2
+SLAM_POSE_DELAY = 0.045
+SLAM_SPEED_GATE = 3.0
+PREDICT_SUBSTEP = 0.005
 R_VESC = np.diag([1e6, 1e6, 1e6, 0.0225, 100.0, 0.1])  # pose not fused in the replay
 HZ = 100.0
-ACCEL_EMA = 0.2
 
 
 def wrap(a):
@@ -112,8 +121,12 @@ def ekf_update(x, P, z, hx, H, R, angle_idx=None):
     return x + K @ y, I_KH @ P @ I_KH.T + K @ R @ K.T, float(y @ np.linalg.solve(S, y))
 
 
-def replay(bag, speed_bias=0.0, q_scale=1.0, steer_delay=None):
+def replay(bag, speed_bias=0.0, q_scale=1.0, steer_delay=None, accel=True, slam_speed=True):
     model = SimulatorSingleTrackModel(PARAMS, Q * q_scale)
+    R_imu = R_IMU if accel else R_IMU_NO_ACCEL
+    tracker = TrailingSpeedWindow(SLAM_SPEED_WINDOW)
+    history = PredictionHistory(IMU_ACCEL_LAG)
+    slam_z, slam_span, slam_rejected = None, None, 0
     delay = CommandDelay(PARAMS.steer_delay if steer_delay is None else steer_delay)
     imu, cmd, odom = bag['imu'], bag['cmd'], bag['odom']
     vesc = bag['vesc'] if len(bag['vesc']) else odom  # raw VESC odometry, else the old EKF's twist
@@ -125,13 +138,13 @@ def replay(bag, speed_bias=0.0, q_scale=1.0, steer_delay=None):
     x = np.zeros(7)
     x[5] = imu[np.searchsorted(imu[:, 0], t0), 2]
     P = model.P_0.copy()
-    P[2, 2], P[5, 5] = R_IMU[0, 0], R_IMU[1, 1]
+    P[2, 2], P[5, 5] = R_imu[0, 0], R_imu[1, 1]
     i_imu = i_cmd = i_vesc = 0
-    ema = None
     speed_cmd = 0.0
     imu_z = None
     imu_fresh = False
     nis = {'imu': [], 'vesc': []}
+    i_pose = 0
     rows = []
     live = bag['live']
     for t in np.arange(t0, t1, 1.0 / HZ):
@@ -141,9 +154,9 @@ def replay(bag, speed_bias=0.0, q_scale=1.0, steer_delay=None):
             i_cmd += 1
         while i_imu < len(imu) and imu[i_imu, 0] <= t:
             _, yaw, wz, ax, ay = imu[i_imu]
-            a = np.array([ax, ay])
-            ema = a if ema is None else ACCEL_EMA * a + (1 - ACCEL_EMA) * ema
-            imu_z = np.array([wrap(yaw - yaw0), wz, *ema])
+            # imu_transformer: the IMU frame is base_link rotated by 90 degrees about z.
+            a = np.array([-ay, ax]) - IMU_ACCEL_BIAS
+            imu_z = np.array([wrap(yaw - yaw0), wz, *a])
             i_imu += 1
             imu_fresh = True
         vesc_z = None
@@ -153,18 +166,44 @@ def replay(bag, speed_bias=0.0, q_scale=1.0, steer_delay=None):
             i_vesc += 1
         if t == t0:
             continue
-        u_pred = np.array([speed_cmd, delay.at(t - 0.5 / HZ)])
+        while i_pose < len(odom) and odom[i_pose, 0] <= t:
+            sample = tracker.push(odom[i_pose, 0], odom[i_pose, 1], odom[i_pose, 2], odom[i_pose, 3])
+            if sample is not None and slam_speed:
+                slam_z = np.array([sample[0]])
+                slam_span = (odom[i_pose, 0] - sample[1] - SLAM_POSE_DELAY, odom[i_pose, 0] - SLAM_POSE_DELAY)
+            i_pose += 1
         u = np.array([speed_cmd, delay.at(t)])
-        xn = np.array(model.f(x, u_pred, 1.0 / HZ)).flatten()
-        F = np.array(model.F(x, u_pred, 1.0 / HZ)).reshape(7, 7)
-        x, P = xn, F @ P @ F.T + model.Q / HZ
+        substeps = int(np.ceil(1.0 / HZ / PREDICT_SUBSTEP))
+        h = 1.0 / HZ / substeps
+        for k in range(substeps):
+            u_step = np.array([speed_cmd, delay.at(t - 1.0 / HZ + (k + 0.5) * h)])
+            xn = np.array(model.f(x, u_step, h)).flatten()
+            F = np.array(model.F(x, u_step, h)).reshape(7, 7)
+            x, P = xn, F @ P @ F.T + model.Q * h
         if imu_fresh and imu_z is not None:
-            x, P, d = ekf_update(x, P, imu_z, model.Hx_imu(x, u), model.HJacobian_imu(x, u), R_IMU, 0)
+            hx = model.Hx_imu(x, u)
+            if history.accel is not None:
+                hx[2:] = history.accel
+            x, P, d = ekf_update(x, P, imu_z, hx, model.HJacobian_imu(x, u), R_imu, 0)
             nis['imu'].append(d)
             imu_fresh = False
         if vesc_z is not None:
             x, P, d = ekf_update(x, P, vesc_z, model.Hx_vesc(x), model.HJacobian_vesc(x), R_VESC)
             nis['vesc'].append(d)
+        if slam_z is not None:
+            predicted = history.mean_vx(*slam_span)
+            if predicted is not None:
+                H = np.zeros((1, 7))
+                H[0, 3] = 1.0
+                hx = np.array([predicted])
+                S = H @ P @ H.T + R_SLAM_SPEED
+                if float((slam_z - hx) @ np.linalg.solve(S, slam_z - hx)) > SLAM_SPEED_GATE ** 2:
+                    slam_rejected += 1
+                else:
+                    x, P, d = ekf_update(x, P, slam_z, hx, H, R_SLAM_SPEED)
+                    nis.setdefault('slam', []).append(d)
+            slam_z = None
+        history.record(t, x[3], model.Hx_imu(x, u)[2:])
         j = np.searchsorted(odom[:, 0], t)
         if j < len(odom) and np.isfinite(ref_vx[j]) and t - t0 > 1.0:
             k = min(np.searchsorted(vesc[:, 0], t), len(vesc) - 1)
@@ -174,6 +213,7 @@ def replay(bag, speed_bias=0.0, q_scale=1.0, steer_delay=None):
                 lv = live[m, [4, 6]]
             rows.append((t, x[3], x[4], x[5], ref_vx[j], ref_vy[j], ref_wz[j],
                          vesc[k, 4] + speed_bias, vesc[k, 6], lv[0], lv[1]))
+    nis['slam_rejected'] = slam_rejected
     return np.array(rows), nis
 
 
@@ -195,10 +235,13 @@ def main():
     ap.add_argument('--speed-bias', type=float, default=0.0, help='offset added to the odometry speed (m/s)')
     ap.add_argument('--q-scale', type=float, default=1.0)
     ap.add_argument('--steer-delay', type=float, default=None, help='override the model steering delay (s)')
+    ap.add_argument('--no-accel', action='store_true', help='do not fuse the IMU accelerations (previous behaviour)')
+    ap.add_argument('--no-slam-speed', action='store_true', help='do not fuse the SLAM forward speed')
     args = ap.parse_args()
     all_e = []
     for path in args.bags:
-        rows, nis = replay(read_bag(path), args.speed_bias, args.q_scale, args.steer_delay)
+        rows, nis = replay(read_bag(path), args.speed_bias, args.q_scale, args.steer_delay,
+                           not args.no_accel, not args.no_slam_speed)
         summarize(Path(path).name.replace('sysid_', ''), rows, nis)
         all_e.append(rows[:, 1:4] - rows[:, 4:7])
     e = np.vstack(all_e)
