@@ -1,5 +1,6 @@
 import yaml, os, subprocess, time
 import rclpy
+from stack_master.qos import LATCHED_QOS
 from rclpy.node import Node
 from f110_msgs.msg import WpntArray
 import numpy as np
@@ -41,12 +42,12 @@ class SectorSlicer(Node):
             WpntArray,
             '/global_waypoints',
             self.global_wpnts_cb,
-            10)
+            LATCHED_QOS)
         self.bounds_sub = self.create_subscription(
             MarkerArray,
             '/trackbounds/markers',
             self.bounds_cb,
-            10)
+            LATCHED_QOS)
 
         #rosparam to define yaml dir but filename will always be speed_scaling.yaml
         map_name = self.get_parameter('map_name').get_parameter_value().string_value
@@ -164,7 +165,7 @@ class SectorSlicer(Node):
             dict_file['Sector' + str(i)].update({'only_FTG': False})
             #Add no_FTG field to sector
             dict_file['Sector' + str(i)].update({'no_FTG': False})
-        ros_yaml_preamble = {'sector_tuner': {'ros__parameters': dict_file}}
+        ros_yaml_preamble = {'/**/sector_tuner': {'ros__parameters': dict_file}}  # any namespace, e.g. the sim opponent
         
         #Save yaml to the respective maps folder 
         yaml_path = os.path.join(self.yaml_dir, 'speed_scaling.yaml')

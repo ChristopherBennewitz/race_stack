@@ -2,6 +2,7 @@ import math
 import os
 import yaml
 import rclpy
+from stack_master.qos import LATCHED_QOS
 import numpy as np
 from scipy.spatial.transform import Rotation
 from rclpy.node import Node
@@ -41,9 +42,9 @@ class Controller(Node):
                          automatically_declare_parameters_from_overrides=True)
 
         # remote parameters
-        self.map_path = get_remote_parameter(self, 'global_parameters', 'map_path')
-        self.racecar_version = get_remote_parameter(self, 'global_parameters', 'racecar_version')
-        self.sim = get_remote_parameter(self, 'global_parameters', 'sim')
+        self.map_path = get_remote_parameter(self, '/global_parameters', 'map_path')
+        self.racecar_version = get_remote_parameter(self, '/global_parameters', 'racecar_version')
+        self.sim = get_remote_parameter(self, '/global_parameters', 'sim')
         # The RL policy runs without the state machine, which is the only other user of this rate.
         self.state_machine_rate = (None if self.get_parameter('mode').value == "RL"
                                    else get_remote_parameter(self, 'state_machine', 'rate_hz'))
@@ -106,7 +107,7 @@ class Controller(Node):
         # '/l1_param_tuner/parameter_updates',self.l1_params_cb) #l1 param
         # tuning/updating
         self.create_subscription(String, '/state', self.state_cb, 10)
-        self.create_subscription(WpntArray, '/global_waypoints', self.track_length_cb, 10)
+        self.create_subscription(WpntArray, '/global_waypoints', self.track_length_cb, LATCHED_QOS)
         self.create_subscription(ObstacleArray, '/perception/obstacles', self.obstacle_cb, 10)
         self.create_subscription(WpntArray, '/local_waypoints', self.local_waypoint_cb,
                                  10)  # waypoints (x, y, v, norm trackbound, s, kappa)
@@ -385,7 +386,7 @@ class Controller(Node):
         Notices the change in the parameters and alters the spline params accordingly
         """
 
-        if parameter_event.node != "/controller" or self.mode == "FTG":
+        if parameter_event.node != self.get_fully_qualified_name() or self.mode == "FTG":
             return
 
         if self.mode == "MAP":

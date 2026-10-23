@@ -1,4 +1,5 @@
 import rclpy
+from stack_master.qos import LATCHED_QOS
 from rclpy.node import Node
 
 from f110_msgs.msg import WpntArray
@@ -12,18 +13,19 @@ from tf2_ros import Buffer, TransformListener
 class FrenetOdomRepublisher(Node):
     """Publishes the car state in Frenet coordinates.
 
-    Pose comes from TF (map -> car_state/base_link), velocity from /state_estimation/odom.
+    Pose comes from TF (map -> base_frame, default car_state/base_link), velocity from /state_estimation/odom.
     """
 
     def __init__(self):
         super().__init__('frenet_odom_republisher')
+        self.base_frame = self.declare_parameter('base_frame', 'car_state/base_link').value
         self.converter = None
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         self.frenet_odom_publisher_ = self.create_publisher(Odometry, '/car_state/frenet/odom', 10)
 
-        self.create_subscription(WpntArray, '/global_waypoints', self.global_trajectory_callback, 10)
+        self.create_subscription(WpntArray, '/global_waypoints', self.global_trajectory_callback, LATCHED_QOS)
         self.create_subscription(Odometry, '/state_estimation/odom', self.odom_callback, 10)
 
     def global_trajectory_callback(self, msg):
@@ -36,9 +38,9 @@ class FrenetOdomRepublisher(Node):
         if self.converter is None:
             return
         try:
-            tf = self.tf_buffer.lookup_transform('map', 'car_state/base_link', rclpy.time.Time())
+            tf = self.tf_buffer.lookup_transform('map', self.base_frame, rclpy.time.Time())
         except Exception as e:
-            self.get_logger().warn(f"map->car_state/base_link lookup failed: {e}", throttle_duration_sec=1.0)
+            self.get_logger().warn(f"map->{self.base_frame} lookup failed: {e}", throttle_duration_sec=1.0)
             return
 
         t = tf.transform.translation
