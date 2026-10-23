@@ -353,6 +353,8 @@ class Controller(Node):
         device = self.get_parameter_or('device', Parameter('device', value='cpu')).value
         direction = self.get_parameter_or('direction', Parameter('direction', value='ccw')).value
         self.rl_max_odom_age = self.get_parameter_or('max_odom_age_s', Parameter('max_odom_age_s', value=0.1)).value
+        # The odometry is for base_link (the rear axle); the policy was trained on the CoG pose (l_r in f1tenth_car.toml).
+        self.rl_cog_offset = self.get_parameter_or('cog_offset_m', Parameter('cog_offset_m', value=0.14766)).value
 
         self.pose_in_frame = pose_in_frame
         self.rl_controller = RL_Controller(checkpoint, device, direction, self.get_logger())
@@ -612,6 +614,8 @@ class Controller(Node):
             r = t.rotation
             frame_yaw = math.atan2(2.0 * (r.w * r.z + r.x * r.y), 1.0 - 2.0 * (r.y * r.y + r.z * r.z))
             x, y, yaw = self.pose_in_frame(x, y, yaw, t.translation.x, t.translation.y, frame_yaw)
+        x += self.rl_cog_offset * math.cos(yaw)
+        y += self.rl_cog_offset * math.sin(yaw)
         return self.rl_controller.main_loop(x, y, yaw, twist.linear.x, twist.angular.z)
 
     def create_pid_msg(self, should, actual, error, d_value, i_value, input):

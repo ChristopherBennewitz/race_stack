@@ -166,6 +166,14 @@ class EkfNode(Node):
             self.get_logger().warn("[EKF Node] Unknown Model provided. Using point-mass motion model instead")
             self.model = models.point_mass_model(self.Q)
 
+        # The single-track states are at the CoG, but the odometry and TF are for base_link, the rear axle.
+        if self.uses_sim_model:
+            self.cog_to_base_link = self.model.params.l_r
+        elif self.model_type == "single_track_model":
+            self.cog_to_base_link = self.p['l_r']
+        else:
+            self.cog_to_base_link = 0.0
+
         # Initialize EKF
         # dim_z is just for initializaiton (can change depending on update)
         self.ekf = ExtendedKalmanFilter(dim_x=self.model.dim_x, dim_z=4)
@@ -336,7 +344,11 @@ class EkfNode(Node):
         self.get_logger().info("Shutting down...")
 
     def publish_odometry(self):
-        state = self.model.get_odom_state(self.ekf.x)
+        state = np.array(self.model.get_odom_state(self.ekf.x), dtype=float)
+        # Move the CoG pose back to the rear axle (base_link): the position along the heading, vy by omega * l_r.
+        state[0] -= self.cog_to_base_link * np.cos(state[2])
+        state[1] -= self.cog_to_base_link * np.sin(state[2])
+        state[4] -= self.cog_to_base_link * state[5]
 
         odom = Odometry()
         odom.header.stamp = self.get_clock().now().to_msg()
