@@ -45,6 +45,15 @@ uv run --project ../f1tenth_parallel_sim python progress_mpc/scripts/export_acad
 Only the track is a runtime input. `scripts/export_acados.py` writes the acados solver, CasADi's C code for
 the model step, and `mpc_config.h` with the sizes and car constants the wrapper uses.
 
+## Solve time
+
+One SQP-RTI iteration costs ~7.6 ms on a fast laptop, ~26 ms on the car's NUC (the control period is 25 ms). 97 % of it is
+the QP inside that iteration, not the model. The export therefore sets `qp_solver_cond_N = 8` (the same QP with partial
+condensing, identical commands) and `qp_tol = 1e-4` (HPIPM stops at a looser tolerance). Measured on the sim's track with
+the model as the plant over 8 starts x 250 steps: solve 7.6 -> 1.4 ms, 0 solver failures, same path length and no track
+violations; the C++ controller solves in ~1.5 ms. Changing these is an export flag (`--qp-cond-n`, `--qp-tol`, 0 keeps the
+sim's default); capping the QP iterations or HPIPM `SPEED_ABS` changed the behaviour and are not used.
+
 ## Tests
 
 `pytest progress_mpc/test` runs the closed loop on a synthetic track with the MPC's own model as the plant.

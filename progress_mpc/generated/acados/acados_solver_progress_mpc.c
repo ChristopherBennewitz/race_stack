@@ -832,7 +832,7 @@ static void progress_mpc_acados_create_set_opts(progress_mpc_solver_capsule* cap
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "levenberg_marquardt", &levenberg_marquardt);
 
     /* options QP solver */
-    int qp_solver_cond_N;const int qp_solver_cond_N_ori = 40;
+    int qp_solver_cond_N;const int qp_solver_cond_N_ori = 8;
     qp_solver_cond_N = N < qp_solver_cond_N_ori ? N : qp_solver_cond_N_ori; // use the minimum value here
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_cond_N", &qp_solver_cond_N);
 
@@ -868,6 +868,14 @@ static void progress_mpc_acados_create_set_opts(progress_mpc_solver_capsule* cap
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_iter_max", &qp_solver_iter_max);
 
 
+    double qp_solver_tol_stat = 0.0001;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_tol_stat", &qp_solver_tol_stat);
+    double qp_solver_tol_eq = 0.0001;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_tol_eq", &qp_solver_tol_eq);
+    double qp_solver_tol_ineq = 0.0001;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_tol_ineq", &qp_solver_tol_ineq);
+    double qp_solver_tol_comp = 0.0001;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_tol_comp", &qp_solver_tol_comp);
 
     int print_level = 0;
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "print_level", &print_level);
