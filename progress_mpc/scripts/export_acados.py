@@ -62,6 +62,10 @@ def main() -> None:
                         help="clearance beyond the collision radius (m); negative keeps the sim config's 0.2")
     parser.add_argument("--max-speed", type=float, default=0.0,
                         help="speed command cap (m/s); 0 (default) keeps the actuation manager's 5 m/s")
+    parser.add_argument("--q-steer-rate", type=float, default=30.0,
+                        help="steering-rate weight (sim config: 1); 30 halves the steering reversals in the hangar sim")
+    parser.add_argument("--levenberg-marquardt", type=float, default=0.03,
+                        help="Levenberg-Marquardt regularization (sim config: 0.01); 0.03 steadies the plan a little")
     args = parser.parse_args()
 
     sim_repo = args.sim_repo.resolve()
@@ -78,6 +82,10 @@ def main() -> None:
         overrides["track_margin"] = args.track_margin
     if args.max_speed > 0.0:
         overrides["max_speed"] = args.max_speed
+    if args.q_steer_rate >= 0.0:
+        overrides["q_steer_rate"] = args.q_steer_rate
+    if args.levenberg_marquardt >= 0.0:
+        overrides["levenberg_marquardt"] = args.levenberg_marquardt
     config = config.model_copy(update=overrides)
     with tempfile.TemporaryDirectory() as work:
         config = config.model_copy(update={"output_dir": Path(work) / "mpc"})

@@ -63,10 +63,12 @@ static const casadi_int casadi_s4[3] = {1, 1, 1};
 /* progress_mpc_cost_ext_cost_fun:(i0[11],i1[2],i2[0],i3[7])->(o0) */
 static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem) {
   casadi_real a0, a1, a2, a3;
-  a0=arg[1]? arg[1][0] : 0;
-  a1=arg[0]? arg[0][7] : 0;
-  a0=(a0-a1);
-  a0=casadi_sq(a0);
+  a0=30.;
+  a1=arg[1]? arg[1][0] : 0;
+  a2=arg[0]? arg[0][7] : 0;
+  a1=(a1-a2);
+  a1=casadi_sq(a1);
+  a0=(a0*a1);
   a1=2.0000000000000000e-02;
   a2=arg[1]? arg[1][1] : 0;
   a3=arg[0]? arg[0][10] : 0;

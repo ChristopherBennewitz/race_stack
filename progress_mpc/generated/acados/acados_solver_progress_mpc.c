@@ -828,7 +828,7 @@ static void progress_mpc_acados_create_set_opts(progress_mpc_solver_capsule* cap
     int globalization_full_step_dual = 0;
     ocp_nlp_solver_opts_set(nlp_config, capsule->nlp_opts, "globalization_full_step_dual", &globalization_full_step_dual);
 
-    double levenberg_marquardt = 0.01;
+    double levenberg_marquardt = 0.03;
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "levenberg_marquardt", &levenberg_marquardt);
 
     /* options QP solver */
