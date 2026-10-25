@@ -8,6 +8,10 @@
     <arg name="custom_ekf" default="false" description="true: python ekf_node, false: robot_localization" />
     <arg name="ekf_model_type" default="point_mass_model"
         description="ekf_node model: point_mass_model / kinematic_bicycle_model / single_track_model / simulator_single_track_model" />
+    <arg name="global_ekf" default="true"
+        description="also publish the map-frame odometry for the controllers (/state_estimation/odom_map); see global_type" />
+    <arg name="global_type" default="correction"
+        description="correction: local odometry + smoothly corrected map-&gt;odom (default); ekf: the global filter (needs custom_ekf and the simulator model)" />
     <arg name="racecar_version" default="$(env RACECAR_VERSION)" />
 
     <node pkg="imu_transformer" name="imu_transformer_node" exec="imu_transformer_node">
@@ -21,6 +25,8 @@
         <include file="$(find-pkg-share state_estimation)/launch/ekf_node_launch.py">
             <arg name="custom_ekf" value="$(var custom_ekf)" />
             <arg name="model_type" value="$(var ekf_model_type)" />
+            <arg name="global_ekf" value="$(var global_ekf)" />
+            <arg name="global_type" value="$(var global_type)" />
         </include>
     </group>
 

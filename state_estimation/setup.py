@@ -27,6 +27,7 @@ setup(
             'carstate_node = state_estimation.carstate_node:main',
             'basalt_to_ekf_node = state_estimation.basalt_to_ekf_node:main',
             'ekf_node = state_estimation.ekf_node.ekf_node:main',
+            'map_odom_node = state_estimation.ekf_node.map_odom_node:main',
             'ekf_benchmark_node = state_estimation.ekf_benchmark_node:main',
             'slam_match_benchmark_node = state_estimation.slam_match_benchmark_node:main',
         ],

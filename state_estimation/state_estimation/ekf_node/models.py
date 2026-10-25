@@ -364,6 +364,7 @@ class VehicleModelParams:
     steer_bias: float = 0.0
     steer_delay: float = 0.0
     steer_latency: float = 0.1
+    speed_delay: float = 0.0
     drive_gain: float = 3.0
     brake_gain: float = 5.0
     imu_x: float = 0.07  # IMU ahead of base_link (the rear axle), the base_link -> imu static transform
@@ -377,8 +378,9 @@ class CommandDelay:
     """Time-stamped command history that returns the command as it was ``delay`` seconds ago.
 
     The simulator delays the steering command by ``steer_delay`` before it reaches the first-order
-    steering lag (``BatchedSim._delayed_steer``). The command is a known input, so the EKF does not need
-    delay states: it looks the delayed command up here and feeds it to the model as ``u[1]``. Commands are
+    steering lag and the speed command by ``speed_delay`` before it reaches the speed loop
+    (``BatchedSim._delayed``). The command is a known input, so the EKF does not need
+    delay states: it looks the delayed command up here and feeds it to the model as ``u[0]`` / ``u[1]``. Commands are
     piecewise constant (the actuation manager republishes each one on a timer and the sim holds it over
     the physics substeps), so the lookup holds the last command issued at or before ``t - delay`` rather
     than interpolating, which would add about half a command period of lag. Before the first sample the
@@ -422,7 +424,7 @@ class SimulatorSingleTrackModel:
     """CasADi-symbolic, simulator-compatible seven-state single-track model.
 
     State x = [x, y, yaw, vx, vy, yaw_rate, steer]
-    Control u = [speed_command, steer_command_delayed]
+    Control u = [speed_command_delayed, steer_command_delayed]
 
     ``predict`` integrates with RK4 over the step, holding ``u``; call it once per substep for steps
     over which the delayed steering command changes.
@@ -434,8 +436,8 @@ class SimulatorSingleTrackModel:
     to a road-wheel target that the wheel follows through a first-order lag
     ``steer_latency``, and the drive effort per unit mass is a proportional
     speed loop ``gain * (speed_command - vx)`` with separate drive/brake
-    gains. The delay is not in the graph: ``u[1]`` is the steering command
-    *as delayed by the caller* (see :class:`CommandDelay`), which is exact
+    gains, the speed command delayed by ``speed_delay``. The delays are not in the graph: ``u`` holds the
+    commands *as delayed by the caller* (see :class:`CommandDelay`), which is exact
     because the command is a known input. The command rate/range limits
     live in the actuation limiter, not here.
     """
@@ -548,8 +550,16 @@ class SimulatorSingleTrackModel:
         h_imu_sym = ca.vertcat(yaw, yaw_rate, ax, ay)
         _h_imu = ca.Function('h_imu', [x_sym, u_sym], [h_imu_sym])
         _H_imu = ca.Function('H_imu', [x_sym, u_sym], [ca.jacobian(h_imu_sym, x_sym)])
+        self.casadi_functions = {'h_imu': _h_imu, 'H_imu': _H_imu}  # for offline tools that rebuild the filter symbolically
         self.Hx_imu = lambda state, u: np.array(_h_imu(state, u)).flatten()
         self.HJacobian_imu = lambda state, u: np.array(_H_imu(state, u)).reshape(4, self.dim_x)
+
+        # Pose of base_link (the rear axle, l_r behind the CoG) in the state's frame, which is what SLAM reports.
+        h_pose_sym = ca.vertcat(x - p.l_r * ca.cos(yaw), y - p.l_r * ca.sin(yaw), yaw)
+        _h_pose = ca.Function('h_pose', [x_sym], [h_pose_sym])
+        _H_pose = ca.Function('H_pose', [x_sym], [ca.jacobian(h_pose_sym, x_sym)])
+        self.Hx_pose = lambda state: np.array(_h_pose(state)).flatten()
+        self.HJacobian_pose = lambda state: np.array(_H_pose(state)).reshape(3, self.dim_x)
 
         H_vesc = np.eye(6, self.dim_x)
         self.Hx_vesc = lambda state: H_vesc @ np.asarray(state, dtype=float).flatten()

@@ -17,10 +17,11 @@ from rcl_interfaces.msg import SetParametersResult
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformBroadcaster
 
-from . import models
+from . import defaults, diag_ros, models
 from .models import CommandDelay, SimulatorSingleTrackModel, VehicleModelParams
 from .prediction_history import PredictionHistory
-from .sensors import ImuSensor, OdomSensor, SlamSpeedSensor
+from .sensors import ImuSensor, OdomSensor, SlamPoseSensor
+from .slam_pose import SlamPoseUpdater
 
 
 class EkfNode(Node):
@@ -32,6 +33,15 @@ class EkfNode(Node):
         - VESC: [x, y, psi, vx, vy, vpsi]
         - VIO: [x, y, psi, vx, vy, vpsi]
         - ACKERMANN: [accel, steer_angle]
+        - SLAM pose (global filter only): [x, y, psi] of base_link in the map frame
+
+    The node runs in one of two roles, chosen by the ``slam_pose_topic`` parameter:
+        - local (empty): knows nothing of SLAM. Its odometry lives in the ``odom`` frame, is smooth and drifts,
+          and is the motion prior the localization starts from. It broadcasts ``odom -> base_link``.
+        - global (a pose topic): the same model and inputs, plus the SLAM pose, in the ``map`` frame. SLAM
+          corrections reach it as measurements, so its estimate stays smooth where ``map -> odom`` jumps.
+          It publishes odometry only; the localization owns ``map -> odom``.
+    Keeping SLAM out of the local filter means the localization's prior is never made of its own output.
 
     Sensors are configured in a single list in __init__ (see self.sensors); adding
     a new sensor is one line there.
@@ -47,54 +57,29 @@ class EkfNode(Node):
         self.declare_parameter('vesc_topic', '/odom')
         self.declare_parameter('vio_topic', '/basalt/odom')
         self.declare_parameter('send_transform', False)
+        self.declare_parameter('frame_id', 'odom')  # the frame the published odometry is in
+        # Role: empty is the local filter; a PoseStamped topic (base_link in map) makes this the global one.
+        self.declare_parameter('slam_pose_topic', '')
         self.declare_parameter('floor', rclpy.Parameter.Type.STRING)
         self.declare_parameter('R_imu', rclpy.Parameter.Type.DOUBLE_ARRAY)
         self.declare_parameter('R_vesc', rclpy.Parameter.Type.DOUBLE_ARRAY)
         self.declare_parameter('R_vio', rclpy.Parameter.Type.DOUBLE_ARRAY)
         self.declare_parameter('Q', rclpy.Parameter.Type.DOUBLE_ARRAY)
 
-        # Parameters of model_type 'simulator_single_track_model'. They live apart from the pbl_config
-        # car/tire config and from the shared R/Q above, which are sized for the other models.
-        # Actuator model, fitted by the simulator's sysid (runs/sysid/fit/20261018-182602): the steering
-        # command is delayed by steer_delay, then followed through one lag of steer_latency.
-        for name, default in (
-            ('sim_cmd_topic', '/ackermann_cmd_applied'),
-            ('sim_steer_gain', 1.44903), ('sim_steer_bias', 0.000568671),
-            ('sim_steer_delay', 0.0517435), ('sim_steer_latency', 0.0311014),
-            ('sim_drive_gain', 8.60186), ('sim_brake_gain', 6.09098),
-            ('sim_front_drive_frac', 0.5), ('sim_constraint_time_constant', 0.03),
-            ('sim_blend_center', 0.6), ('sim_slip_speed_regularizer', 0.1),
-            # Nominal values from f1tenth_parallel_sim/configs/f1tenth_car.toml.
-            ('sim_mass', 3.718), ('sim_yaw_inertia', 0.0561),
-            ('sim_front_axle_distance', 0.17334), ('sim_rear_axle_distance', 0.14766),
-            ('sim_cg_height', 0.074),
-            ('sim_front_B', 29.9996), ('sim_front_C', 1.04495),
-            ('sim_front_D', 0.520009), ('sim_front_E', 0.0),
-            ('sim_rear_B', 29.9983), ('sim_rear_C', 1.00017),
-            ('sim_rear_D', 0.643787), ('sim_rear_E', 0.0),
-        ):
-            self.declare_parameter(name, default)
-        # Noise from the simulator's sysid. VESC pose is not fused (huge R): its x/y/yaw are dead-reckoned
-        # in a frame with an arbitrary yaw origin, which would fight the IMU heading.
-        # The IMU accelerations are fused so the speed is not carried by the command model alone. The accelerometer
-        # follows the car through a first-order lag of sim_imu_accel_lag (the sensor's low-pass), so it is fused raw
-        # (no EMA, which would add lag) against the predicted acceleration passed through that lag. R and the lag
-        # are fitted on the long drives of data/sysid_20261011 against d(vesc speed)/dt and v * yaw_rate at the IMU
-        # (sysid/latency.py); sim_imu_accel_bias is the constant offset those fits leave (mounting tilt).
-        self.declare_parameter('sim_R_imu', [0.1, 0.0009, 1.4, 3.0])
-        self.declare_parameter('sim_imu_accel_bias', [0.05, 0.56])
-        self.declare_parameter('sim_imu_accel_lag', 0.05)
-        self.declare_parameter('sim_imu_x', 0.07)
-        # Forward speed from the SLAM pose (/car_state/pose), one sample per window, compared with the speed
-        # estimate over the same window shifted by sim_slam_pose_delay (how far the pose stamps lag the car).
-        self.declare_parameter('sim_slam_speed_topic', '/car_state/pose')
-        self.declare_parameter('sim_slam_speed_window', 0.2)
-        self.declare_parameter('sim_slam_pose_delay', 0.045)
-        self.declare_parameter('sim_R_slam_speed', [0.04])
-        self.declare_parameter('sim_slam_speed_gate', 3.0)
-        self.declare_parameter('sim_predict_substep', 0.005)
-        self.declare_parameter('sim_R_vesc', [1000000.0, 1000000.0, 1000000.0, 0.0225, 100.0, 0.1])
-        self.declare_parameter('sim_Q', [4.9e-5, 3.6e-5, 3.6e-5, 4.0e-4, 2.6e-3, 0.18, 4.2e-3])
+        # Parameters of model_type 'simulator_single_track_model' (values and their provenance in defaults.py). They
+        # live apart from the pbl_config car/tire config and from the shared R/Q above, which are sized for the
+        # other models.
+        self.declare_parameter('sim_cmd_topic', '/ackermann_cmd_applied')
+        noise = defaults.NOISE_GLOBAL if self.get_parameter('slam_pose_topic').value else defaults.NOISE
+        for name, default in {**defaults.MODEL, **noise}.items():
+            self.declare_parameter('sim_' + name, default)
+        # Global filter only. The pose stamps lag the car by sim_slam_pose_delay (the scan match, TF lookup and
+        # republish), so a pose is compared with the estimate that far in the past. R is generous because the
+        # localization is fed the local filter's odometry, so its pose is not independent of this filter's inputs.
+        self.declare_parameter('sim_slam_pose_delay', defaults.SLAM['pose_delay'])
+        self.declare_parameter('sim_R_slam_pose', defaults.SLAM['R_slam_pose'])
+        self.declare_parameter('sim_slam_pose_gate', defaults.SLAM['pose_gate'])
+        self.declare_parameter('sim_slam_pose_reseed', defaults.SLAM['pose_reseed'])
 
         self.Hz = self.get_parameter('frequency').value
         self.racecar_version = os.environ.get('RACECAR_VERSION', 'NUC6')
@@ -107,6 +92,11 @@ class EkfNode(Node):
         self.VIO_TOPIC = self.get_parameter('vio_topic').value
         
         self.send_transform = self.get_parameter('send_transform').value
+        self.frame_id = self.get_parameter('frame_id').value
+        self.slam_pose_topic = self.get_parameter('slam_pose_topic').value
+        self.is_global = bool(self.slam_pose_topic)
+        if self.is_global and self.model_type != "simulator_single_track_model":
+            raise ValueError("the global filter needs model_type simulator_single_track_model")
 
         self.get_logger().info(f"[EKF Node] Racecar is: {self.racecar_version}")
 
@@ -117,6 +107,10 @@ class EkfNode(Node):
         self.uses_sim_model = self.model_type == "simulator_single_track_model"
         prefix = 'sim_' if self.uses_sim_model else ''
         self.R_imu = np.diag(self.get_parameter(prefix + 'R_imu').value)
+        if self.is_global:
+            # The IMU heading is zero-referenced at its first sample, which is not the map frame, and it drifts;
+            # the global filter takes its heading from SLAM and keeps only the IMU's rates and accelerations.
+            self.R_imu[0, 0] = 1e6
         self.R_vesc = np.diag(self.get_parameter(prefix + 'R_vesc').value)
         self.R_vio = np.diag(self.get_parameter('R_vio').value)
         q_values = list(self.get_parameter(prefix + 'Q').value)
@@ -182,8 +176,9 @@ class EkfNode(Node):
 
         # Control input array
         self.ackermann_data = np.zeros(2)  # [accel, steer_angle]; the simulator model takes [speed, steer_angle]
-        # Steering command history; the simulator model is driven by the command as delayed by steer_delay.
+        # Command histories; the simulator model is driven by the commands as delayed by steer_delay / speed_delay.
         self.steer_history = CommandDelay(self.get_parameter('sim_steer_delay').value)
+        self.speed_history = CommandDelay(self.get_parameter('sim_speed_delay').value)
 
         # General stuff
         self.lock = threading.Lock()
@@ -202,9 +197,10 @@ class EkfNode(Node):
         # from the VESC AHRS and shares no reference with the odometry sources.
         self.prediction_history = PredictionHistory(self.get_parameter('sim_imu_accel_lag').value)
         if self.uses_sim_model:
+            # The global filter starts when SLAM provides its first pose, not on the IMU heading.
             imu = ImuSensor(self, self.IMU_TOPIC, self.R_imu, self._lagged_imu_measurement,
-                            self.model.HJacobian_imu, on_init=self.init_state_from_imu, relative=True,
-                            alpha=1.0, accel_bias=self.get_parameter('sim_imu_accel_bias').value)
+                            self.model.HJacobian_imu, on_init=None if self.is_global else self.init_state_from_imu,
+                            relative=True, alpha=1.0, accel_bias=self.get_parameter('sim_imu_accel_bias').value)
         else:
             imu = ImuSensor(self, self.IMU_TOPIC, self.R_imu, self.model.Hx_imu, self.model.HJacobian_imu,
                             on_init=self.init_state_from_imu, relative=True)
@@ -217,13 +213,13 @@ class EkfNode(Node):
                        self.model.Hx_vesc, self.model.HJacobian_vesc,
                        relative=False),
         ]
-        if self.uses_sim_model:
-            self.sensors.append(SlamSpeedSensor(
-                self, self.get_parameter('sim_slam_speed_topic').value,
-                np.diag(self.get_parameter('sim_R_slam_speed').value), self.prediction_history,
-                self.get_parameter('sim_slam_speed_window').value,
-                self.get_parameter('sim_slam_pose_delay').value,
-                self.get_parameter('sim_slam_speed_gate').value, self.model.dim_x))
+        if self.is_global:
+            self.slam_updater = SlamPoseUpdater(
+                self.model, np.diag(self.get_parameter('sim_R_slam_pose').value), self.prediction_history,
+                self.get_parameter('sim_slam_pose_delay').value, self.get_parameter('sim_slam_pose_gate').value,
+                self.get_parameter('sim_slam_pose_reseed').value)
+            self.sensors.append(SlamPoseSensor(self, self.slam_pose_topic, self.slam_updater,
+                                               on_init=self.init_state_from_slam))
 
         # Control input subscriptions
         if self.uses_sim_model:
@@ -237,6 +233,9 @@ class EkfNode(Node):
 
         # Publisher
         self.odom_pub = self.create_publisher(Odometry, self.ODOM_TOPIC, 1)
+        self.diag_pub = self.create_publisher(diag_ros.DiagnosticArray, '/state_estimation/diagnostics', 10)
+        self.loop_dt_max = 0.0  # longest filter step since the last diagnostics message
+        self.skipped_ticks = 0  # steps dropped because dt was not usable (a stalled or restarted clock)
 
         # Evaulating computational expences
         self.predict_count = 0
@@ -250,6 +249,7 @@ class EkfNode(Node):
         self.add_on_set_parameters_callback(self.parameter_callback)
 
         self.timer = self.create_timer(1.0 / self.Hz, self.timer_callback)
+        self.create_timer(1.0, self.publish_diagnostics)
 
         self.get_logger().info(f"[EKF Node] EKF node initialized sesfully using {self.model_type}")
 
@@ -261,17 +261,7 @@ class EkfNode(Node):
         return h
 
     def _sim_model_params(self):
-        g = lambda n: self.get_parameter('sim_' + n).value
-        return VehicleModelParams(
-            m=g('mass'), I_z=g('yaw_inertia'), l_f=g('front_axle_distance'), l_r=g('rear_axle_distance'),
-            h_cg=g('cg_height'),
-            Bf=g('front_B'), Cf=g('front_C'), Df=g('front_D'), Ef=g('front_E'),
-            Br=g('rear_B'), Cr=g('rear_C'), Dr=g('rear_D'), Er=g('rear_E'),
-            front_drive_frac=g('front_drive_frac'), constraint_time_constant=g('constraint_time_constant'),
-            blend_center=g('blend_center'), slip_speed_regularizer=g('slip_speed_regularizer'),
-            steer_gain=g('steer_gain'), steer_bias=g('steer_bias'),
-            steer_delay=g('steer_delay'), steer_latency=g('steer_latency'),
-            drive_gain=g('drive_gain'), brake_gain=g('brake_gain'), imu_x=g('imu_x'))
+        return defaults.vehicle_model_params(lambda name: self.get_parameter('sim_' + name).value)
 
     def parameter_callback(self, params):
         self.get_logger().info(f"[EKF Node] Parameters updated: {params}")
@@ -296,13 +286,21 @@ class EkfNode(Node):
         self.get_logger().info(f"[EKF Node] Initial omega set to {imu_data[1]}")
         self.is_initialized = True
 
+    def init_state_from_slam(self, pose):
+        """Seed the global filter's pose from the first SLAM pose."""
+        self.slam_updater.seed(self.ekf, pose[:3])
+        self.get_logger().info(f"[EKF Node] Initial map pose set to {np.round(pose[:3], 3).tolist()}")
+        self.is_initialized = True
+
     # Callbacks
     def ackermann_callback(self, msg):
         if self.uses_sim_model:
             with self.lock:
                 self.ackermann_data[0] = msg.drive.speed
                 self.ackermann_data[1] = msg.drive.steering_angle
-                self.steer_history.push(self.get_clock().now().nanoseconds * 1e-9, msg.drive.steering_angle)
+                stamp = self.get_clock().now().nanoseconds * 1e-9
+                self.steer_history.push(stamp, msg.drive.steering_angle)
+                self.speed_history.push(stamp, msg.drive.speed)
             return
         with self.lock:
             now = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
@@ -324,6 +322,47 @@ class EkfNode(Node):
 
             self.ackermann_data[0] = calculated_accel
             self.ackermann_data[1] = -msg.drive.steering_angle
+
+    def publish_diagnostics(self):
+        """Per-sensor arrival and live NIS, and the filter's own timing and uncertainty, on /state_estimation/diagnostics."""
+        now = self.get_clock().now().nanoseconds * 1e-9
+        role = 'global' if self.is_global else 'local'
+        statuses = []
+        for sensor in self.sensors:
+            h = sensor.health
+            values = {**h.values(now), 'update_mean_ms': sensor.update_mean_ms, 'update_max_ms': sensor.update_max_ms}
+            # The pose's NIS is not a calibration check (its variance is deliberately generous), so only the others are judged.
+            verdict = '' if sensor.name == 'slam_pose' else h.nis_verdict()
+            if h.age(now) > 0.5:
+                level, message = 'warn', f'{sensor.name}: no message for {min(h.age(now), 1e3):.1f} s'
+            elif verdict:
+                level, message = 'warn', verdict
+            else:
+                level, message = 'ok', f'{sensor.name}: NIS {h.nis_mean:.2f} (expected {h.dof})'
+            statuses.append(diag_ros.status(f'ekf_{role}/{sensor.name}', level, message, values))
+
+        with self.lock:
+            P = np.array(self.ekf.P)
+        values = {'initialized': float(self.is_initialized), 'loop_dt_max_ms': 1e3 * self.loop_dt_max,
+                  'skipped_ticks': float(self.skipped_ticks), 'predict_mean_ms': self.predict_mean_ms,
+                  'predict_max_ms': self.predict_max_ms, 'update_mean_ms': self.tot_update_mean_ms,
+                  'update_max_ms': self.tot_update_max_ms, 'trace_P': float(np.trace(P))}
+        if self.uses_sim_model:
+            for name, i in (('x', 0), ('y', 1), ('yaw', 2), ('vx', 3), ('vy', 4), ('yaw_rate', 5)):
+                values[f'std_{name}'] = float(np.sqrt(max(P[i, i], 0.0)))
+        if self.is_global:
+            updater = self.slam_updater
+            values.update(pose_gated=float(updater.rejected), pose_reseeds=float(updater.reseeds))
+        period = 1.0 / self.Hz
+        if not self.is_initialized:
+            level, message = 'error', 'not initialized (waiting for the first IMU or SLAM message)'
+        elif self.loop_dt_max > 3 * period:
+            level, message = 'warn', f'filter step took up to {1e3 * self.loop_dt_max:.0f} ms (period {1e3 * period:.0f} ms)'
+        else:
+            level, message = 'ok', 'running'
+        statuses.append(diag_ros.status(f'ekf_{role}', level, message, values))
+        self.loop_dt_max = 0.0
+        self.diag_pub.publish(diag_ros.array(self.get_clock().now().to_msg(), statuses))
 
     # Helper functions
     def shutdown(self):
@@ -352,7 +391,7 @@ class EkfNode(Node):
 
         odom = Odometry()
         odom.header.stamp = self.get_clock().now().to_msg()
-        odom.header.frame_id = "odom"
+        odom.header.frame_id = self.frame_id
         odom.child_frame_id = "base_link"
 
         odom.pose.pose.position.x = state[0]
@@ -386,7 +425,7 @@ class EkfNode(Node):
 
         t = TransformStamped()
         t.header.stamp = odom.header.stamp
-        t.header.frame_id = 'odom'  # 'odom'
+        t.header.frame_id = self.frame_id
         t.child_frame_id = 'base_link'    # 'base_link'
 
         t.transform.translation.x = float(state[0])
@@ -424,24 +463,27 @@ class EkfNode(Node):
             return
 
         dt = now - self.last_filter_time
+        self.loop_dt_max = max(self.loop_dt_max, dt)
         if self.uses_sim_model:
             if dt <= 0.0 or dt > 0.25:
+                self.skipped_ticks += 1
                 self.last_filter_time = now
                 return
         elif dt == 0:
             return
         self.last_filter_time = now
 
-        # The simulator model integrates with RK4 in substeps, each driven by the steering command as delayed by
-        # steer_delay at the middle of that substep; the measurement updates use the command at the current time.
+        # The simulator model integrates with RK4 in substeps, each driven by the commands as delayed by
+        # steer_delay / speed_delay at the middle of that substep; the measurement updates use the command at the current time.
         predict_inputs = [(dt, u)]
         if self.uses_sim_model:
             substeps = max(1, math.ceil(dt / self.get_parameter('sim_predict_substep').value))
             h = dt / substeps
             with self.lock:
-                predict_inputs = [(h, np.array([u[0], self.steer_history.at(now - dt + (k + 0.5) * h)]))
+                predict_inputs = [(h, np.array([self.speed_history.at(now - dt + (k + 0.5) * h),
+                                                self.steer_history.at(now - dt + (k + 0.5) * h)]))
                                   for k in range(substeps)]
-                u = np.array([u[0], self.steer_history.at(now)])
+                u = np.array([self.speed_history.at(now), self.steer_history.at(now)])
 
         t0 = time.perf_counter_ns()
 
@@ -472,7 +514,7 @@ class EkfNode(Node):
         self.tot_update_mean_ms += (duration_ms - self.tot_update_mean_ms) / self.tot_update_count
 
         if self.uses_sim_model:
-            self.prediction_history.record(now, self.ekf.x[3], self.model.Hx_imu(self.ekf.x, u)[2:])
+            self.prediction_history.record(now, self.model.Hx_pose(self.ekf.x), self.model.Hx_imu(self.ekf.x, u)[2:])
 
         self.publish_odometry()
 

@@ -14,7 +14,8 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 
-from .speed_window import TrailingSpeedWindow
+from .diagnostics import SensorHealth, informative_dimensions, innovation_nis
+
 
 
 def normalize_angle(x):
@@ -69,6 +70,8 @@ class Sensor:
         self._origin = None
         self._seeded = False
 
+        self.health = SensorHealth(name, informative_dimensions(R))  # arrival, age and the live NIS (diagnostics.py)
+
         # Performance stats
         self.update_count = 0
         self.update_mean_ms = 0.0
@@ -86,7 +89,22 @@ class Sensor:
         raise NotImplementedError(
             f"{self.name}: relative=True but rebase() is not implemented")
 
+    def note_arrival(self, msg):
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        self.health.message(self.node.get_clock().now().nanoseconds * 1e-9, stamp)
+
+    def record_nis(self, ekf, z, u):
+        """Adds this measurement's NIS to the health window. Diagnostics must never stop the filter."""
+        try:
+            args = (u,) if self.uses_control else ()
+            _, nis = innovation_nis(ekf.P, z, self.Hx(ekf.x, *args), self.HJacobian(ekf.x, *args), self.R, self.residual)
+            self.health.dof = max(informative_dimensions(self.R), 1)
+            self.health.record(nis)
+        except (np.linalg.LinAlgError, ValueError, TypeError):
+            pass
+
     def _callback(self, msg):
+        self.note_arrival(msg)
         with self.node.lock:
             self.parse(msg)
             if self.relative:
@@ -114,6 +132,7 @@ class Sensor:
     def update(self, ekf, z, u):
         """Apply the sequential EKF update for this sensor and record timing."""
         t0 = time.perf_counter_ns()
+        self.record_nis(ekf, z, u)
 
         if self.uses_control:
             ekf.update(z=z, HJacobian=self.HJacobian, Hx=self.Hx, R=self.R,
@@ -227,61 +246,49 @@ class OdomSensor(Sensor):
         self.data[2] = yaw
 
 
-class SlamSpeedSensor(Sensor):
+class SlamPoseSensor(Sensor):
     """
-    Forward speed from the SLAM pose, to re-ground the speed state against the wheel odometry.
+    Map-frame pose of base_link from the SLAM localization (``/car_state/pose``), for the global filter.
 
-    Measurement: [v], the mean forward speed over a window of poses (see ``TrailingSpeedWindow``). The pose
-    stamps run ``pose_delay`` behind the car, so the window describes ``[t0 - pose_delay, t1 - pose_delay]``
-    and is compared with the filter's mean speed estimate over that span (``PredictionHistory``). Samples
-    whose innovation exceeds ``gate`` standard deviations are dropped, so a scan-matching jump or loop
-    closure does not drag the speed.
+    Measurement: [x, y, yaw, stamp]. The fusion itself (delay compensation, gating, re-seeding) is in
+    ``SlamPoseUpdater``; this class owns the subscription. ``carstate_node`` republishes the latest TF on a
+    timer, so a message whose stamp has not advanced carries no new scan match and is ignored.
 
-    The localization is fed the EKF's own odometry, so on short windows its speed mostly echoes the filter;
-    keep ``window`` long enough for scan matching to dominate and ``R`` large.
-
-    Args:
-        history:    the filter's ``PredictionHistory``
-        window:     pose window, seconds
-        pose_delay: how far the pose stamps lag the car, seconds
-        gate:       innovation gate, standard deviations
-        dim_x:      filter state dimension (forward speed is state 3)
+    The first pose seeds the filter: the global filter has no pose of its own until SLAM provides one.
     """
 
-    def __init__(self, node, topic, R, history, window, pose_delay, gate, dim_x):
-        H = np.zeros((1, dim_x))
-        H[0, 3] = 1.0
-        super().__init__(node, 'slam_speed', PoseStamped, topic, 3, R,
-                         lambda x: np.array([self._predicted]), lambda x: H)
-        self.history = history
-        self.pose_delay = pose_delay
-        self.gate = gate
-        self.rejected = 0
-        self._predicted = 0.0
-        self._tracker = TrailingSpeedWindow(window)
+    def __init__(self, node, topic, updater, on_init):
+        super().__init__(node, 'slam_pose', PoseStamped, topic, 4, updater.R, None, None, on_init=on_init)
+        self.updater = updater
+        self.outcomes = {}
+        self._last_stamp = None
 
     def _callback(self, msg):
+        self.note_arrival(msg)
         q = msg.pose.orientation
         __, __, yaw = tft.euler_from_quaternion([q.x, q.y, q.z, q.w])
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         with self.node.lock:
-            sample = self._tracker.push(stamp, msg.pose.position.x, msg.pose.position.y, yaw)
-            if sample is not None:
-                speed, duration = sample
-                self.data[:] = (speed, stamp - duration, stamp)
-                self.fresh = True
+            if self._last_stamp is not None and stamp <= self._last_stamp:
+                return
+            self._last_stamp = stamp
+            self.data[:] = (msg.pose.position.x, msg.pose.position.y, normalize_angle(yaw), stamp)
+            if not self._seeded and self.on_init is not None:
+                self.on_init(self.data)
+                self._seeded = True
+            self.fresh = True
 
     def update(self, ekf, z, u):
-        speed, t0, t1 = z
-        predicted = self.history.mean_vx(t0 - self.pose_delay, t1 - self.pose_delay)
-        if predicted is None:
-            return
-        self._predicted = predicted
-        z = np.array([speed])
-        H = self.HJacobian(ekf.x)
-        S = H @ ekf.P @ H.T + self.R
-        innovation = z - self.Hx(ekf.x)
-        if float(innovation @ np.linalg.solve(S, innovation)) > self.gate ** 2:
-            self.rejected += 1
-            return
-        super().update(ekf, z, u)
+        t0 = time.perf_counter_ns()
+        outcome = self.updater.update(ekf, z[:3], z[3])
+        self.outcomes[outcome] = self.outcomes.get(outcome, 0) + 1
+        if outcome in ('updated', 'gated') and self.updater.last_innovation is not None:
+            y, S = self.updater.last_innovation  # not a calibration check: the pose variance is deliberately generous
+            self.health.record(float(y @ np.linalg.solve(S, y)))
+        if outcome == 'reseeded':
+            self.node.get_logger().warn("[EKF Node] SLAM pose disagreed with the estimate repeatedly; re-seeded from it")
+        duration_ms = (time.perf_counter_ns() - t0) / 1_000_000.0
+        if duration_ms > self.update_max_ms:
+            self.update_max_ms = duration_ms
+        self.update_count += 1
+        self.update_mean_ms += (duration_ms - self.update_mean_ms) / self.update_count
