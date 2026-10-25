@@ -52,7 +52,9 @@ the QP inside that iteration, not the model. The export therefore sets `qp_solve
 condensing, identical commands) and `qp_tol = 1e-4` (HPIPM stops at a looser tolerance). Measured on the sim's track with
 the model as the plant over 8 starts x 250 steps: solve 7.6 -> 1.4 ms, 0 solver failures, same path length and no track
 violations; the C++ controller solves in ~1.5 ms. Changing these is an export flag (`--qp-cond-n`, `--qp-tol`, 0 keeps the
-sim's default); capping the QP iterations or HPIPM `SPEED_ABS` changed the behaviour and are not used.
+sim's default); capping the QP iterations or HPIPM `SPEED_ABS` changed the behaviour and are not used. Every variant that
+was timed, the profile, the rejected ones and the before/after on the car are in [docs/solve_time.md](docs/solve_time.md);
+`scripts/benchmark_solver.py` reproduces them.
 
 ## Tests
 
