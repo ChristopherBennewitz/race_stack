@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import pytest
 
-from controller.mpc.mpc_controller import MPC_Controller, base_link_to_cog, oriented_centerline, track_envelope
+from controller.mpc.mpc_controller import MPC_Controller, base_link_to_cog, oriented_centerline, track_envelope, extrapolate_state
 
 
 def circle(n=200, r=5.0):
@@ -191,3 +191,30 @@ def test_the_controller_reports_the_envelope_once_it_has_a_track(stubbed):
     controller.set_centerline(circle(r=8.0), np.full(200, 1.0), np.full(200, 1.0))
     left, right = controller.envelope()
     assert left.shape == right.shape == (200, 2)
+
+
+def test_extrapolating_a_straight_run_moves_the_pose_along_the_heading():
+    x, y, yaw = extrapolate_state(1.0, 2.0, np.pi / 2, 3.0, 0.0, 0.0, 0.1)
+    assert (x, y, yaw) == pytest.approx((1.0, 2.3, np.pi / 2))
+
+
+def test_extrapolating_with_a_sideways_velocity_uses_the_body_frame():
+    # Heading along +x, moving left (+y in the body frame) at 1 m/s.
+    x, y, yaw = extrapolate_state(0.0, 0.0, 0.0, 2.0, 1.0, 0.0, 0.5)
+    assert (x, y, yaw) == pytest.approx((1.0, 0.5, 0.0))
+
+
+def test_extrapolating_a_turn_follows_the_circle():
+    # 2 m/s at 1 rad/s is a circle of radius 2; a quarter turn takes pi/2 s, from (0, 0) heading +x it ends at (2, 2).
+    dt = np.pi / 2 / 1000
+    x, y, yaw = 0.0, 0.0, 0.0
+    for _ in range(1000):
+        x, y, yaw = extrapolate_state(x, y, yaw, 2.0, 0.0, 1.0, dt)
+    assert (x, y, yaw) == pytest.approx((2.0, 2.0, np.pi / 2), abs=1e-4)
+    # one big step uses the heading at the middle of the interval (45 degrees): speed * cos(45 deg) * dt along x
+    x, y, yaw = extrapolate_state(0.0, 0.0, 0.0, 2.0, 0.0, 1.0, np.pi / 2)
+    assert (x, y, yaw) == pytest.approx((2.0 * np.cos(np.pi / 4) * np.pi / 2, 2.0 * np.sin(np.pi / 4) * np.pi / 2, np.pi / 2))
+
+
+def test_zero_time_leaves_the_pose_alone():
+    assert extrapolate_state(1.0, 2.0, 0.3, 4.0, 0.5, 1.0, 0.0) == pytest.approx((1.0, 2.0, 0.3))

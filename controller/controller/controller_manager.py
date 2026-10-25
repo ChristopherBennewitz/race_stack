@@ -29,7 +29,7 @@ from controller.map import MAP_Controller
 from controller.pp import PP_Controller
 from controller.ftg import FTG_Controller
 from controller.frames import pose_in_frame
-from controller.mpc.mpc_controller import base_link_to_cog
+from controller.mpc.mpc_controller import base_link_to_cog, extrapolate_state
 from rcl_interfaces.msg import ParameterValue, ParameterType, ParameterDescriptor, FloatingPointRange, IntegerRange
 from tf_transformations import quaternion_from_euler
 from stack_master.parameter_event_handler import ParameterEventHandler
@@ -393,6 +393,12 @@ class Controller(Node):
         direction = self.get_parameter_or('direction', Parameter('direction', value='ccw')).value
         self.rl_max_odom_age = self.get_parameter_or('max_odom_age_s', Parameter('max_odom_age_s', value=0.1)).value
         self.mpc_controller = MPC_Controller(direction, self.get_logger())
+        # The state the MPC receives is older than the moment its command starts to act: the estimator's lag (measured
+        # 6 to 15 ms), the message's age when the cycle starts (measured, from its stamp) and the solve. Moving the state
+        # forward by that removed the last crashes in the sim and raised the progress by 10 % (docs/track_clearance.md).
+        self.mpc_latency_comp = self.get_parameter_or('mpc_latency_comp', Parameter('mpc_latency_comp', value=True)).value
+        self.mpc_state_lag = self.get_parameter_or('mpc_state_lag_s', Parameter('mpc_state_lag_s', value=0.012)).value
+        self.mpc_compute_lag = self.get_parameter_or('mpc_compute_lag_s', Parameter('mpc_compute_lag_s', value=0.0075)).value
         self.rate = self.mpc_controller.control_hz
         # The MPC's state is at the centre of gravity; the odometry is for base_link (the rear axle).
         self.mpc_cog_offset = self.get_parameter_or(
@@ -748,6 +754,9 @@ class Controller(Node):
         self.mpc_controller.note_odom_age(self.odom_age)
         # The EKF's velocity is that of base_link, so its sideways part is the CoG's minus l_r * yaw_rate.
         x, y, vy = base_link_to_cog(x, y, yaw, twist.linear.y, twist.angular.z, self.mpc_cog_offset)
+        if self.mpc_latency_comp:
+            lag = self.mpc_state_lag + min(max(self.odom_age, 0.0), self.rl_max_odom_age) + self.mpc_compute_lag
+            x, y, yaw = extrapolate_state(x, y, yaw, twist.linear.x, vy, twist.angular.z, lag)
 
         # The command issued last cycle has now been applied for one period.
         if self.mpc_controller.last_cmd is not None:

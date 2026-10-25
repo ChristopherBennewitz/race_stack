@@ -27,6 +27,18 @@ def base_link_to_cog(x, y, yaw, vy, yaw_rate, l_r):
     return x + l_r * np.cos(yaw), y + l_r * np.sin(yaw), vy + l_r * yaw_rate
 
 
+def extrapolate_state(x, y, yaw, vx, vy, yaw_rate, dt):
+    """The pose `dt` seconds later at constant body-frame velocity and yaw rate (the velocities stay as they are).
+
+    The MPC plans from the state it is given as if it were the state when the command starts to act. What it is given is
+    older than that (the estimator's lag, the message age, the solve), so it is moved forward by that time. The position
+    integrates the velocity along the heading at the middle of the interval, which is exact to second order in `dt`.
+    """
+    heading = yaw + 0.5 * yaw_rate * dt
+    c, s = np.cos(heading), np.sin(heading)
+    return x + (vx * c - vy * s) * dt, y + (vx * s + vy * c) * dt, yaw + yaw_rate * dt
+
+
 def track_envelope(xy, d_left, d_right, clearance):
     """The region the MPC keeps the centre of gravity in: the track narrowed by `clearance` on both sides.
 
