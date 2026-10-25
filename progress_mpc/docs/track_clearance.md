@@ -78,7 +78,8 @@ Raw per-start results: `track_benchmark_round{1,2,3}.json`.
 - **40 stages is the right horizon.** 30 stages crash in every run, 50 and 60 crash more than 40. The solver's weights were
   tuned at 40; the horizon length is not what was wrong.
 - **With the right clearance the delays hardly matter** (216 m with them, 216 m without), and latency compensation adds
-  about 3 % progress and removed the last crash in the 10-start test. A speed cap of 4 m/s also removed it, at a small
+  progress (+11 % at margin 0.10 without the cap in round 2, +3 % on the deployed controller with the 4 m/s cap in
+  round 3) and removed the last crash in the 10-start test. A speed cap of 4 m/s also removed it, at a small
   cost in progress. Both are cheap safety margins for the first drives.
 - **The looser QP settings do not change the driving**, and the solver failed less often with them (1 against 22).
 
