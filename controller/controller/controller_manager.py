@@ -5,6 +5,7 @@ import rclpy
 from stack_master.qos import LATCHED_QOS
 import numpy as np
 from scipy.spatial.transform import Rotation
+from rclpy.duration import Duration
 from rclpy.node import Node
 from tf2_ros import Buffer, TransformException, TransformListener
 from rclpy.parameter import Parameter
@@ -414,6 +415,7 @@ class Controller(Node):
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE))
         self.odom_age = 0.0
         self.diag_pub = self.create_publisher(DiagnosticArray, '/controller/diagnostics', 10)
+        self.mpc_markers_pub = self.create_publisher(MarkerArray, '/controller/mpc/markers', 1)
         self.create_timer(0.1, self.publish_mpc_diagnostics)
 
     #############
@@ -729,7 +731,52 @@ class Controller(Node):
             if self.applied_cmd is not None and (self.get_clock().now() - self.applied_cmd[2]).nanoseconds * 1e-9 < 0.2:
                 steer, speed = self.applied_cmd[:2]
             self.mpc_controller.report_applied(steer, speed)
-        return self.mpc_controller.main_loop(x, y, yaw, twist.linear.x, vy, twist.angular.z)
+        speed, steer = self.mpc_controller.main_loop(x, y, yaw, twist.linear.x, vy, twist.angular.z)
+        self.publish_mpc_markers(x, y, yaw, twist.linear.x, speed, steer)
+        return speed, steer
+
+    def publish_mpc_markers(self, x, y, yaw, vx, speed, steer):
+        """What the MPC sees, for RViz: its predicted path, the state it was given and the command it chose.
+
+        The arrow is the centre-of-gravity state handed to the solver; if it is not on the car, the estimate or a frame
+        is off. The line is the horizon, drawn from that state, with a dot every 5 stages.
+        """
+        stamp = self.get_clock().now().to_msg()
+        lifetime = Duration(seconds=0.2).to_msg()
+
+        def marker(marker_id, ns, kind):
+            m = Marker()
+            m.header.frame_id, m.header.stamp = 'map', stamp
+            m.ns, m.id, m.type, m.action = ns, marker_id, kind, Marker.ADD
+            m.lifetime = lifetime
+            m.pose.orientation.w = 1.0
+            return m
+
+        plan = self.mpc_controller.plan_xy()
+        horizon = marker(0, 'mpc_horizon', Marker.LINE_STRIP)
+        horizon.scale.x = 0.04
+        horizon.color.r, horizon.color.g, horizon.color.b, horizon.color.a = 0.1, 0.9, 0.2, 1.0
+        horizon.points = [Point(x=float(px), y=float(py), z=0.05) for px, py in plan]
+        stages = marker(1, 'mpc_horizon', Marker.SPHERE_LIST)
+        stages.scale.x = stages.scale.y = stages.scale.z = 0.09
+        stages.color.r, stages.color.g, stages.color.b, stages.color.a = 0.0, 0.6, 1.0, 1.0
+        stages.points = [Point(x=float(px), y=float(py), z=0.05) for px, py in plan[::5]]
+
+        state = marker(2, 'mpc_state', Marker.ARROW)
+        state.scale.x, state.scale.y, state.scale.z = 0.5, 0.06, 0.06
+        state.color.r, state.color.g, state.color.b, state.color.a = 1.0, 0.5, 0.0, 1.0
+        state.pose.position.x, state.pose.position.y, state.pose.position.z = float(x), float(y), 0.1
+        state.pose.orientation.z, state.pose.orientation.w = math.sin(0.5 * yaw), math.cos(0.5 * yaw)
+
+        d = self.mpc_controller
+        text = marker(3, 'mpc_text', Marker.TEXT_VIEW_FACING)
+        text.scale.z = 0.18
+        text.color.r = text.color.g = text.color.b = text.color.a = 1.0
+        text.pose.position.x, text.pose.position.y, text.pose.position.z = float(x), float(y), 0.6
+        text.text = (f"v {vx:.2f} -> {speed:.2f} m/s\nsteer {steer:+.3f} rad\n"
+                     f"lateral {d.lateral_error:+.2f} m  odom {1e3 * self.odom_age:.0f} ms\n"
+                     f"solve {1e3 * d.mpc.stats['solve_seconds']:.1f} ms")
+        self.mpc_markers_pub.publish(MarkerArray(markers=[horizon, stages, state, text]))
 
     def create_pid_msg(self, should, actual, error, d_value, i_value, input):
         pid_msg = PidData()

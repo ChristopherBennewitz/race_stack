@@ -222,6 +222,25 @@ Visualization Manager:
       Name: Map Markers
     - Class: rviz_common/Group
       Displays:
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: MPC view
+          Namespaces:
+            "": true
+            mpc_horizon: true
+            mpc_state: true
+            mpc_text: true
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /controller/mpc/markers
+          Value: true
+      Enabled: true
+      Name: MPC
+    - Class: rviz_common/Group
+      Displays:
         - Alpha: 1
           Autocompute Intensity Bounds: true
           Autocompute Value Bounds:

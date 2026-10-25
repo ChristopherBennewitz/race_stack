@@ -92,6 +92,10 @@ class MPC_Controller:
         """How old the odometry used for this cycle was."""
         self._window['odom_age'].append(seconds)
 
+    def plan_xy(self):
+        """The last plan's predicted centre-of-gravity positions in the map frame, (horizon + 1, 2)."""
+        return np.asarray(self.mpc.plan_world)
+
     def report_applied(self, steer, speed):
         """The command the actuation manager applied during the last control period."""
         self.mpc.report_applied(steer, speed)
