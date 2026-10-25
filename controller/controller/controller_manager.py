@@ -127,7 +127,10 @@ class Controller(Node):
         if self.mode in self.STANDALONE_MODES:
             odom_topic = self.get_parameter_or('odom_topic', Parameter('odom_topic', value=odom_topic)).value
         self.odom_topic = odom_topic
-        self.create_subscription(Odometry, odom_topic, self.odom_cb, 10)  # car speed
+        # RL and MPC act on the newest state only: a deeper queue serves old messages first whenever the executor falls
+        # behind (a 10-deep queue at 100 Hz is up to 100 ms of lag), so keep just the latest.
+        odom_depth = 1 if self.mode in self.STANDALONE_MODES else 10
+        self.create_subscription(Odometry, odom_topic, self.odom_cb, odom_depth)  # car speed
         self.create_subscription(
             Odometry,
             '/car_state/frenet/odom',
