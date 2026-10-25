@@ -56,6 +56,14 @@ sim's default); capping the QP iterations or HPIPM `SPEED_ABS` changed the behav
 was timed, the profile, the rejected ones and the before/after on the car are in [docs/solve_time.md](docs/solve_time.md);
 `scripts/benchmark_solver.py` reproduces them.
 
+## Track clearance and speed cap
+
+The export defaults to `--track-margin 0.10` (clearance 0.384 m around the centre of gravity; the sim config has 0.2, 0.484 m)
+and `--max-speed 4.0`. On the 1.7 m wide hangar track the original margin left a 0.7 m corridor and the MPC crashed in 5 of
+6 simulated runs (3 of 6 without any delay); with 0.10 m it crashed in 1 of 10 (0 of 10 with the cap or the controller's
+latency compensation), and 0.15 m crashed in 8 of 10. A horizon of 40 stages is the optimum. Details, the three test rounds
+and the harness (`scripts/benchmark_track.py`): [docs/track_clearance.md](docs/track_clearance.md).
+
 ## Tests
 
 `pytest progress_mpc/test` runs the closed loop on a synthetic track with the MPC's own model as the plant.
