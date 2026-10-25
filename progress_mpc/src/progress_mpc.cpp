@@ -425,6 +425,7 @@ double ProgressMpc::control_dt() const { return kControlDt; }
 int ProgressMpc::history_length() const { return kHistory; }
 double ProgressMpc::speed_max() const { return kSpeedMax; }
 double ProgressMpc::steer_max() const { return kSteerMax; }
+double ProgressMpc::clearance_margin() const { return kClearanceMargin; }
 double ProgressMpc::cog_offset() const { return kLr; }
 
 }  // namespace progress_mpc

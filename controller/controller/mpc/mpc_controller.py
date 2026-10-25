@@ -27,6 +27,21 @@ def base_link_to_cog(x, y, yaw, vy, yaw_rate, l_r):
     return x + l_r * np.cos(yaw), y + l_r * np.sin(yaw), vy + l_r * yaw_rate
 
 
+def track_envelope(xy, d_left, d_right, clearance):
+    """The region the MPC keeps the centre of gravity in: the track narrowed by `clearance` on both sides.
+
+    `xy` is the closed centerline in driving direction with the track half-widths to its left and right (what
+    `oriented_centerline` returns). Returns the left and right edge points, each (n, 2), in the same order.
+    """
+    xy = np.asarray(xy, dtype=np.float64)
+    tangent = np.roll(xy, -1, axis=0) - np.roll(xy, 1, axis=0)
+    tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
+    left_normal = np.stack([-tangent[:, 1], tangent[:, 0]], axis=1)
+    left = xy + left_normal * (np.asarray(d_left, dtype=np.float64) - clearance)[:, None]
+    right = xy - left_normal * (np.asarray(d_right, dtype=np.float64) - clearance)[:, None]
+    return left, right
+
+
 class MPC_Controller:
     """Runs the C++ progress MPC (no ROS). Driven by the controller manager at the MPC's control rate.
 
@@ -43,6 +58,7 @@ class MPC_Controller:
         self.mpc = ProgressMpc(track_spacing)
         self.direction = direction
         self.last_cmd = None
+        self.track = None  # the oriented centerline and widths handed to the solver
         self.clock = clock
         self.resets = 0
         self.jump_resets = 0
@@ -72,7 +88,14 @@ class MPC_Controller:
     def set_centerline(self, xy, d_left, d_right):
         xy, d_left, d_right = oriented_centerline(xy, d_left, d_right, self.direction)
         self.mpc.set_track(xy, d_left, d_right)
+        self.track = (xy, d_left, d_right)
         self.last_cmd = None
+
+    def envelope(self):
+        """The (left, right) edges of the region the MPC keeps the centre of gravity in, or None before the track is set."""
+        if self.track is None:
+            return None
+        return track_envelope(*self.track, self.mpc.clearance_margin)
 
     def reset(self):
         """Forgets the plan and the command history, e.g. after the state estimate was missing for a while."""

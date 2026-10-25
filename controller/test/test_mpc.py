@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import pytest
 
-from controller.mpc.mpc_controller import MPC_Controller, base_link_to_cog, oriented_centerline
+from controller.mpc.mpc_controller import MPC_Controller, base_link_to_cog, oriented_centerline, track_envelope
 
 
 def circle(n=200, r=5.0):
@@ -166,3 +166,28 @@ def test_an_estimate_jump_drops_the_plan_and_is_counted(stubbed):
     times[0] += 0.025
     controller.main_loop(5.0, 0.0, 0.0, 2.0, 0.0, 0.0)  # the old prediction is forgotten: no spurious error
     assert np.isnan(controller.diagnostics()['prediction_error_mean'])
+
+
+def test_the_envelope_is_the_track_narrowed_by_the_clearance():
+    # A counter-clockwise circle of radius 8: left of the driving direction is towards the centre.
+    left, right = track_envelope(circle(r=8.0), np.full(200, 1.0), np.full(200, 2.0), 0.5)
+    assert np.allclose(np.linalg.norm(left, axis=1), 8.0 - (1.0 - 0.5), atol=0.01)
+    assert np.allclose(np.linalg.norm(right, axis=1), 8.0 + (2.0 - 0.5), atol=0.01)
+
+
+def test_the_envelope_follows_the_driving_direction():
+    # Clockwise driving: the centerline is reversed and the widths swapped, so "left" is now towards the outside.
+    xy, d_left, d_right = oriented_centerline(circle(r=8.0), np.full(200, 1.0), np.full(200, 2.0), 'cw')
+    left, right = track_envelope(xy, d_left, d_right, 0.5)
+    assert np.allclose(np.linalg.norm(left, axis=1), 8.0 + (2.0 - 0.5), atol=0.01)
+    assert np.allclose(np.linalg.norm(right, axis=1), 8.0 - (1.0 - 0.5), atol=0.01)
+
+
+def test_the_controller_reports_the_envelope_once_it_has_a_track(stubbed):
+    controller, _ = stubbed
+    controller.mpc.set_track = lambda *args: None
+    controller.mpc.clearance_margin = 0.484
+    assert controller.envelope() is None
+    controller.set_centerline(circle(r=8.0), np.full(200, 1.0), np.full(200, 1.0))
+    left, right = controller.envelope()
+    assert left.shape == right.shape == (200, 2)

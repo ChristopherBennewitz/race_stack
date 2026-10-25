@@ -237,6 +237,19 @@ Visualization Manager:
             Reliability Policy: Reliable
             Value: /controller/mpc/markers
           Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: MPC track envelope
+          Namespaces:
+            "": true
+            mpc_envelope: true
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /controller/mpc/envelope
+          Value: true
       Enabled: true
       Name: MPC
     - Class: rviz_common/Group

@@ -71,6 +71,8 @@ class ProgressMpc {
   // Command limits baked into the OCP.
   double speed_max() const;
   double steer_max() const;
+  // How far inside the track limits the centre of gravity must stay (m): collision radius plus margin.
+  double clearance_margin() const;
   // Distance from the rear axle (base_link) to the centre of gravity the state refers to (m).
   double cog_offset() const;
 

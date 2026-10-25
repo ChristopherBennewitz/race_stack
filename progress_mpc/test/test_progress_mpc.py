@@ -115,3 +115,8 @@ def test_reset_restarts_from_scratch(mpc):
     first, _, _ = drive(mpc, 30)
     second, _, _ = drive(mpc, 30)
     assert np.allclose(first, second)
+
+
+def test_the_track_clearance_is_exposed(mpc):
+    # collision radius + margin of the exported solver: positive, and well under a metre on a 30 cm wide car
+    assert 0.2 < mpc.clearance_margin < 1.0

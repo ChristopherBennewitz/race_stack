@@ -416,6 +416,7 @@ class Controller(Node):
         self.odom_age = 0.0
         self.diag_pub = self.create_publisher(DiagnosticArray, '/controller/diagnostics', 10)
         self.mpc_markers_pub = self.create_publisher(MarkerArray, '/controller/mpc/markers', 1)
+        self.mpc_envelope_pub = self.create_publisher(MarkerArray, '/controller/mpc/envelope', LATCHED_QOS)
         self.create_timer(0.1, self.publish_mpc_diagnostics)
 
     #############
@@ -449,6 +450,29 @@ class Controller(Node):
         self.mpc_controller.set_centerline(
             [(w.x_m, w.y_m) for w in data.wpnts], [w.d_left for w in data.wpnts], [w.d_right for w in data.wpnts])
         self.get_logger().info(f"Received centerline with {len(data.wpnts)} points")
+        self.publish_mpc_envelope()
+
+    def publish_mpc_envelope(self):
+        """The track limits the MPC actually enforces, for RViz: the track narrowed by the collision radius and margin.
+
+        The solver keeps the centre of gravity of every horizon point between these two lines; a plan that touches
+        them is at its constraint, and one outside is using the soft constraint's slack.
+        """
+        edges = self.mpc_controller.envelope()
+        if edges is None:
+            return
+        markers = []
+        styles = (('left', edges[0], (1.0, 0.45, 0.0)), ('right', edges[1], (1.0, 0.0, 0.3)))
+        for marker_id, (_, edge, color) in enumerate(styles):
+            m = Marker()
+            m.header.frame_id, m.header.stamp = 'map', self.get_clock().now().to_msg()
+            m.ns, m.id, m.type, m.action = 'mpc_envelope', marker_id, Marker.LINE_STRIP, Marker.ADD
+            m.pose.orientation.w = 1.0
+            m.scale.x = 0.03
+            m.color.r, m.color.g, m.color.b, m.color.a = (*color, 1.0)
+            m.points = [Point(x=float(px), y=float(py), z=0.03) for px, py in (*edge, edge[0])]  # closed loop
+            markers.append(m)
+        self.mpc_envelope_pub.publish(MarkerArray(markers=markers))
 
     def applied_cmd_cb(self, data: AckermannDriveStamped):
         self.applied_cmd = (data.drive.steering_angle, data.drive.speed, self.get_clock().now())
