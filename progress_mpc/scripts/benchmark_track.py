@@ -59,6 +59,8 @@ VARIANTS3 = {
     "C++ deployed, comp on":      dict(cfg=dict(track_margin=0.10, max_speed=4.0), delays=True, comp=True, cpp=True),
     "C++ deployed, comp off":     dict(cfg=dict(track_margin=0.10, max_speed=4.0), delays=True, comp=False, cpp=True),
     "Python same settings, comp": dict(cfg=dict(track_margin=0.10, max_speed=4.0), delays=True, comp=True, qp=True),
+    "C++ 5 m/s (no cap), comp on":  dict(cfg=dict(track_margin=0.10), delays=True, comp=True, cpp=True),
+    "C++ 5 m/s (no cap), comp off": dict(cfg=dict(track_margin=0.10), delays=True, comp=False, cpp=True),
     "C++ deployed, no delays":    dict(cfg=dict(track_margin=0.10, max_speed=4.0), delays=False, comp=False, cpp=True),
 }
 ROUNDS = {"1": VARIANTS, "2": VARIANTS2, "3": VARIANTS3}

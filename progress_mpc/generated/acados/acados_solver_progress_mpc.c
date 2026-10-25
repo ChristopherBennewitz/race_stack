@@ -677,7 +677,7 @@ void progress_mpc_acados_setup_nlp_in(progress_mpc_solver_capsule* capsule, cons
     double* ubu = lubu + NBU;
     lbu[0] = -0.3;
     ubu[0] = 0.3;
-    ubu[1] = 4;
+    ubu[1] = 5;
 
     for (int i = 0; i < N; i++)
     {

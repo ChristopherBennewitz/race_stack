@@ -30,7 +30,10 @@ measured delays, 10 starts x 60 s in the sim (`docs/track_clearance.md`): margin
 
     --track-margin 0.10   clearance 0.384 m: 6 cm of worst-case wall clearance (the rectangle's corners are 0.32 m from
                           the centre of gravity), 24 cm when the car is aligned with the track
-    --max-speed 4.0       speed command cap below the actuation manager's 5 m/s; no crash, and more progress than uncapped
+    --max-speed 0         no cap of its own: the speed limit is the actuation manager's (5 m/s). A cap such as
+                          `--max-speed 4.0` is a cheap safety margin for first drives (sim: no crash, slightly less
+                          progress), not a requirement: margin 0.10 + latency compensation at 5 m/s drove 10 of 10
+                          sim runs without contact
 
 Not used, because they changed the behaviour: capping the QP iterations at 20 (track violations of 0.4 m) and HPIPM
 mode SPEED_ABS (breaks); SPEED failed more often. The sim repo's defaults stay in place when a flag is 0.
@@ -57,8 +60,8 @@ def main() -> None:
     parser.add_argument("--qp-tol", type=float, default=1e-4, help="HPIPM tolerance (0: sim default)")
     parser.add_argument("--track-margin", type=float, default=0.10,
                         help="clearance beyond the collision radius (m); negative keeps the sim config's 0.2")
-    parser.add_argument("--max-speed", type=float, default=4.0,
-                        help="speed command cap (m/s); 0 keeps the actuation manager's")
+    parser.add_argument("--max-speed", type=float, default=0.0,
+                        help="speed command cap (m/s); 0 (default) keeps the actuation manager's 5 m/s")
     args = parser.parse_args()
 
     sim_repo = args.sim_repo.resolve()

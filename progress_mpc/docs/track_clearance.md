@@ -63,6 +63,11 @@ the controller's own `extrapolate_state` with its default 12 ms + measured age +
 | C++, compensation off | 0/10 | 210 m | 2 % | 0 |
 | Python reference, same settings | 0/10 | 217 m | 2 % | 0 |
 | C++, no delays at all | 0/10 | 216 m | 2 % | 0 |
+| **C++ at 5 m/s (no cap), compensation on (as deployed)** | **0/10** | **217 m** | 2 % | 0 |
+| C++ at 5 m/s (no cap), compensation off | 2/10 | 189 m | 3 % | 0 |
+
+The first four rows have the 4 m/s cap; the last two are the deployed configuration without it. At 5 m/s the latency
+compensation matters: without it two runs touched a wall.
 
 Raw per-start results: `track_benchmark_round{1,2,3}.json`.
 
@@ -85,9 +90,10 @@ Raw per-start results: `track_benchmark_round{1,2,3}.json`.
 
 ## What changed
 
-- `scripts/export_acados.py` defaults to `--track-margin 0.10` and `--max-speed 4.0` (the sim config has 0.2 and the
-  actuation manager's 5 m/s). `--track-margin -1` / `--max-speed 0` restore those. `mpc_config.h` records
-  `kTrackMargin`; `kClearanceMargin` (0.384) is what the RViz envelope draws.
+- `scripts/export_acados.py` defaults to `--track-margin 0.10` (the sim config has 0.2) and no speed cap of its own: the
+  limit stays the actuation manager's 5 m/s. `--track-margin -1` restores the sim's margin; `--max-speed 4.0` adds a cap,
+  a cheap safety margin for first drives (the first car drive with the new margin, `mpc_run4`, used it).
+  `mpc_config.h` records `kTrackMargin`; `kClearanceMargin` (0.384) is what the RViz envelope draws.
 - The controller extrapolates the state by the estimator's lag (12 ms), the message's measured age and the compute time
   (7.5 ms) before each solve: parameters `mpc_latency_comp`, `mpc_state_lag_s`, `mpc_compute_lag_s`.
 

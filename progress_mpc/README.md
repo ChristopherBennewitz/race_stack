@@ -59,9 +59,10 @@ was timed, the profile, the rejected ones and the before/after on the car are in
 ## Track clearance and speed cap
 
 The export defaults to `--track-margin 0.10` (clearance 0.384 m around the centre of gravity; the sim config has 0.2, 0.484 m)
-and `--max-speed 4.0`. On the 1.7 m wide hangar track the original margin left a 0.7 m corridor and the MPC crashed in 5 of
-6 simulated runs (3 of 6 without any delay); with 0.10 m it crashed in 1 of 10 (0 of 10 with the cap or the controller's
-latency compensation), and 0.15 m crashed in 8 of 10. A horizon of 40 stages is the optimum. Details, the three test rounds
+and no speed cap of its own (the actuation manager's 5 m/s; `--max-speed 4.0` adds one). On the 1.7 m wide hangar track the
+original margin left a 0.7 m corridor and the MPC crashed in 5 of 6 simulated runs (3 of 6 without any delay); with 0.10 m
+and the controller's latency compensation it crashed in 0 of 10 at 5 m/s, and 0.15 m crashed in 8 of 10. A horizon of 40
+stages is the optimum. Details, the three test rounds
 and the harness (`scripts/benchmark_track.py`): [docs/track_clearance.md](docs/track_clearance.md).
 
 ## Tests
