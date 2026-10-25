@@ -126,6 +126,7 @@ class Controller(Node):
         odom_topic = '/state_estimation/odom'
         if self.mode in self.STANDALONE_MODES:
             odom_topic = self.get_parameter_or('odom_topic', Parameter('odom_topic', value=odom_topic)).value
+        self.odom_topic = odom_topic
         self.create_subscription(Odometry, odom_topic, self.odom_cb, 10)  # car speed
         self.create_subscription(
             Odometry,
@@ -378,10 +379,9 @@ class Controller(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        # The stack's centerline publisher uses the default (volatile) QoS and republishes every 10 s. A
-        # TRANSIENT_LOCAL subscription is incompatible with a volatile publisher and would never connect, so
-        # use the default reliable/volatile profile, which also matches a latched publisher (without its history).
-        self.create_subscription(WpntArray, '/centerline_waypoints', self.centerline_cb, QoSProfile(depth=1))
+        # The centerline publisher is latched (global_trajectory_publisher publishes once with LATCHED_QOS), so the
+        # subscription must be too: a volatile one never receives what was published before it connected.
+        self.create_subscription(WpntArray, '/centerline_waypoints', self.centerline_cb, LATCHED_QOS)
 
     def init_mpc_controller(self):
         from controller.mpc.mpc_controller import MPC_Controller
@@ -399,8 +399,8 @@ class Controller(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        # Same QoS reasoning as in init_rl_controller.
-        self.create_subscription(WpntArray, '/centerline_waypoints', self.mpc_centerline_cb, QoSProfile(depth=1))
+        # Latched, like the publisher (see init_rl_controller).
+        self.create_subscription(WpntArray, '/centerline_waypoints', self.mpc_centerline_cb, LATCHED_QOS)
         # The rate-limited command the car actually received: the MPC's rate-limit anchor and steering history.
         self.create_subscription(AckermannDriveStamped, '/ackermann_cmd_applied', self.applied_cmd_cb, 1)
         # The map-frame estimate counts the times it stepped (its correction was set from a SLAM pose); the plan
@@ -668,6 +668,7 @@ class Controller(Node):
     def odom_in_map(self):
         """The latest odometry as (x, y, yaw, twist) in the map frame, or None while it is missing or stale."""
         if self.odom_msg is None:
+            self.get_logger().warn(f"No odometry on {self.odom_topic} yet; not driving", throttle_duration_sec=2.0)
             return None
         age = (self.get_clock().now() - rclpy.time.Time.from_msg(self.odom_msg.header.stamp)).nanoseconds * 1e-9
         self.odom_age = age
@@ -695,6 +696,7 @@ class Controller(Node):
     def rl_cycle(self):
         """Returns (speed, steer), or None while the centerline/odometry are missing or stale."""
         if self.rl_controller.centerline is None:
+            self.get_logger().warn("No centerline yet on /centerline_waypoints; not driving", throttle_duration_sec=2.0)
             return None
         state = self.odom_in_map()
         if state is None:
@@ -707,6 +709,7 @@ class Controller(Node):
     def mpc_cycle(self):
         """Returns (speed, steer), or None while the centerline/odometry are missing or stale."""
         if not self.mpc_controller.has_track:
+            self.get_logger().warn("No centerline yet on /centerline_waypoints; not driving", throttle_duration_sec=2.0)
             return None
         state = self.odom_in_map()
         if state is None:
