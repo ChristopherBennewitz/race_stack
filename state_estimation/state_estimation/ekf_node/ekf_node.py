@@ -18,6 +18,7 @@ from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformBroadcaster
 
 from . import defaults, diag_ros, models
+from .diagnostics import is_moving
 from .models import CommandDelay, SimulatorSingleTrackModel, VehicleModelParams
 from .prediction_history import PredictionHistory
 from .sensors import ImuSensor, OdomSensor, SlamPoseSensor
@@ -46,6 +47,8 @@ class EkfNode(Node):
     Sensors are configured in a single list in __init__ (see self.sensors); adding
     a new sensor is one line there.
     """
+
+    REQUIRED_SENSORS = ('imu', 'vesc', 'slam_pose')  # a silent one of these is a fault; the others are optional inputs
 
     def __init__(self):
         super().__init__('ekf_node')
@@ -323,6 +326,12 @@ class EkfNode(Node):
             self.ackermann_data[0] = calculated_accel
             self.ackermann_data[1] = -msg.drive.steering_angle
 
+    def is_moving(self):
+        """Whether the NIS of this filter's sensors means anything right now (see diagnostics.is_moving)."""
+        if not self.uses_sim_model:
+            return True
+        return is_moving(self.ekf.x[3], self.ekf.x[5])
+
     def publish_diagnostics(self):
         """Per-sensor arrival and live NIS, and the filter's own timing and uncertainty, on /state_estimation/diagnostics."""
         now = self.get_clock().now().nanoseconds * 1e-9
@@ -333,12 +342,14 @@ class EkfNode(Node):
             values = {**h.values(now), 'update_mean_ms': sensor.update_mean_ms, 'update_max_ms': sensor.update_max_ms}
             # The pose's NIS is not a calibration check (its variance is deliberately generous), so only the others are judged.
             verdict = '' if sensor.name == 'slam_pose' else h.nis_verdict()
-            if h.age(now) > 0.5:
+            if h.last_receive is None and sensor.name not in self.REQUIRED_SENSORS:
+                level, message = 'ok', f'{sensor.name}: not used (no messages)'
+            elif h.age(now) > 0.5:
                 level, message = 'warn', f'{sensor.name}: no message for {min(h.age(now), 1e3):.1f} s'
             elif verdict:
                 level, message = 'warn', verdict
             else:
-                level, message = 'ok', f'{sensor.name}: NIS {h.nis_mean:.2f} (expected {h.dof})'
+                level, message = 'ok', f'{sensor.name}: NIS {h.nis_mean:.2f} (expected {h.dof}), counted while moving'
             statuses.append(diag_ros.status(f'ekf_{role}/{sensor.name}', level, message, values))
 
         with self.lock:

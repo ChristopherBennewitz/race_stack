@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-import math
-
 import numpy as np
 import rclpy
 import tf_transformations as tft
@@ -52,7 +50,7 @@ class MapOdomNode(Node):
                                             get('reseed'), get('smooth'))
         self.frame_id = get('frame_id')
         self.std = np.array(get('std'), dtype=float)
-        self.std_growth = float(get('std_growth'))
+        self.std_growth = np.array(get('std_growth'), dtype=float)
         self.pub = self.create_publisher(Odometry, get('output_topic'), 1)
         self.diag_pub = self.create_publisher(diag_ros.DiagnosticArray, '/state_estimation/diagnostics', 10)
         self.jump_pub = self.create_publisher(
@@ -134,21 +132,18 @@ class MapOdomNode(Node):
         self.pub.publish(out)
 
     def pose_covariance(self, local, t):
-        """The local pose covariance rotated into the map frame, plus the correction's uncertainty.
+        """The map-frame pose covariance: position from the correction, heading from the local filter plus the correction's.
 
-        The correction's part grows with the time since the last SLAM pose (``std_growth`` per second, per axis), so a
-        consumer sees the output become less certain when the localization stalls.
+        The local filter's position covariance grows without bound (nothing measures its position), which says nothing
+        about where the car is on the map once SLAM pins it, so the position uncertainty here is the correction's alone
+        (``std``, growing by ``std_growth`` per second without a SLAM pose). The heading is bounded in the local filter
+        (the IMU heading), so its variance is kept and the correction's added.
         """
         stale = max(0.0, t - self.correction.last_stamp) if self.correction.last_stamp is not None else 0.0
-        std = self.std + self.std_growth * stale
-        cov = np.array(local, dtype=float).reshape(6, 6)
-        c, s = math.cos(self.correction.transform[2]), math.sin(self.correction.transform[2])
-        R = np.eye(6)
-        R[:2, :2] = [[c, -s], [s, c]]
-        cov = R @ cov @ R.T
-        cov[0, 0] += std[0] ** 2
-        cov[1, 1] += std[1] ** 2
-        cov[5, 5] += std[2] ** 2
+        std = self.std + np.asarray(self.std_growth, dtype=float) * stale
+        cov = np.zeros((6, 6))
+        cov[0, 0], cov[1, 1] = std[0] ** 2, std[1] ** 2
+        cov[5, 5] = float(local[35]) + std[2] ** 2  # the local heading variance (element [5, 5] of the 6x6)
         return cov.flatten().tolist()
 
 

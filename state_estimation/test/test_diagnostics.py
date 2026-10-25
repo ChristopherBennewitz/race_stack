@@ -119,3 +119,13 @@ def test_the_correction_reports_its_state_and_drift():
     assert np.isnan(d['innovation_m'])
     assert d['theta'] == pytest.approx(0.3)
     assert d['rate_x'] == d['rate_y'] == d['rate_theta'] == 0.0
+
+
+def test_a_parked_car_is_not_moving_and_a_driving_one_is():
+    from state_estimation.ekf_node.diagnostics import is_moving
+
+    assert not is_moving(0.0, 0.0)
+    assert not is_moving(0.05, -0.02)  # drift while parked
+    assert is_moving(1.5, 0.0)
+    assert is_moving(-0.5, 0.0)  # reversing
+    assert is_moving(0.0, 0.5)  # turning on the spot

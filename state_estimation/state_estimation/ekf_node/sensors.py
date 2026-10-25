@@ -95,6 +95,8 @@ class Sensor:
 
     def record_nis(self, ekf, z, u):
         """Adds this measurement's NIS to the health window. Diagnostics must never stop the filter."""
+        if not self.node.is_moving():
+            return
         try:
             args = (u,) if self.uses_control else ()
             _, nis = innovation_nis(ekf.P, z, self.Hx(ekf.x, *args), self.HJacobian(ekf.x, *args), self.R, self.residual)

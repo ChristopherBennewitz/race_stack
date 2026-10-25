@@ -13,6 +13,14 @@ INFORMATIVE_BELOW = 1e5  # a measurement variance above this switches that dimen
 NIS_HIGH = 2.0  # mean NIS / dof above this: the filter is over-confident (its R or Q too small)
 NIS_LOW = 0.1  # below this: the noise settings are far too loose
 MIN_SAMPLES = 100
+MOVING_SPEED = 0.3  # m/s: below this and below MOVING_YAW_RATE the car is parked and its innovations are all noise floor
+MOVING_YAW_RATE = 0.2  # rad/s
+
+
+def is_moving(vx, yaw_rate):
+    """Whether the car is driving. A parked car has no motor vibration and no motion, so every innovation is tiny and
+    the NIS reads "noise far too loose" whatever the settings; it is only a calibration check while moving."""
+    return abs(vx) > MOVING_SPEED or abs(yaw_rate) > MOVING_YAW_RATE
 
 
 def informative_dimensions(R):
