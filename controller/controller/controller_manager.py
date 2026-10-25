@@ -9,16 +9,17 @@ from rclpy.node import Node
 from tf2_ros import Buffer, TransformException, TransformListener
 from rclpy.parameter import Parameter
 from rclpy.client import Client
-from rclpy.qos import QoSProfile
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rcl_interfaces.srv import GetParameters
 
 from ament_index_python import get_package_share_directory
 from ackermann_msgs.msg import AckermannDriveStamped
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from f110_msgs.msg import (CarStateStamped, GapData, ObstacleArray, PidData, Wpnt, WpntArray)
 from geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped
 from nav_msgs.msg import Odometry, Path
 from sensor_msgs.msg import Imu, LaserScan
-from std_msgs.msg import Float64, String
+from std_msgs.msg import Float64, String, UInt32
 from steering_lookup.lookup_steer_angle import LookupSteerAngle
 from visualization_msgs.msg import Marker, MarkerArray
 from frenet_conversion.frenet_converter import FrenetConverter
@@ -26,6 +27,8 @@ from frenet_conversion.frenet_converter import FrenetConverter
 from controller.map import MAP_Controller
 from controller.pp import PP_Controller
 from controller.ftg import FTG_Controller
+from controller.frames import pose_in_frame
+from controller.mpc.mpc_controller import base_link_to_cog
 from rcl_interfaces.msg import ParameterValue, ParameterType, ParameterDescriptor, FloatingPointRange, IntegerRange
 from tf_transformations import quaternion_from_euler
 from stack_master.parameter_event_handler import ParameterEventHandler
@@ -36,6 +39,9 @@ from typing import List, Dict, Union
 
 
 class Controller(Node):
+    # Modes driven by the centerline and the state estimate alone: no global waypoints, Frenet converter or L1 tuning.
+    STANDALONE_MODES = ("RL", "MPC")
+
     def __init__(self):
         super().__init__('controller_manager',
                          allow_undeclared_parameters=True,
@@ -45,8 +51,8 @@ class Controller(Node):
         self.map_path = get_remote_parameter(self, '/global_parameters', 'map_path')
         self.racecar_version = get_remote_parameter(self, '/global_parameters', 'racecar_version')
         self.sim = get_remote_parameter(self, '/global_parameters', 'sim')
-        # The RL policy runs without the state machine, which is the only other user of this rate.
-        self.state_machine_rate = (None if self.get_parameter('mode').value == "RL"
+        # The RL policy and the MPC run without the state machine, which is the only other user of this rate.
+        self.state_machine_rate = (None if self.get_parameter('mode').value in self.STANDALONE_MODES
                                    else get_remote_parameter(self, 'state_machine', 'rate_hz'))
 
         # variables
@@ -98,6 +104,10 @@ class Controller(Node):
             self.get_logger().info("Initializing RL controller")
             self.init_rl_controller()
             self.prioritize_dyn = False
+        elif self.mode == "MPC":
+            self.get_logger().info("Initializing MPC controller")
+            self.init_mpc_controller()
+            self.prioritize_dyn = False
         else:
             self.get_logger().error(f"Invalid mode: {self.mode}")
             return
@@ -111,7 +121,12 @@ class Controller(Node):
         self.create_subscription(ObstacleArray, '/perception/obstacles', self.obstacle_cb, 10)
         self.create_subscription(WpntArray, '/local_waypoints', self.local_waypoint_cb,
                                  10)  # waypoints (x, y, v, norm trackbound, s, kappa)
-        self.create_subscription(Odometry, '/state_estimation/odom', self.odom_cb, 10)  # car speed
+        # RL and MPC take their state from one odometry topic, in any frame: the local filter's `odom` (needs
+        # map->odom) or the smooth `map` estimate (`/state_estimation/odom_map`). The other modes read the local filter's speed.
+        odom_topic = '/state_estimation/odom'
+        if self.mode in self.STANDALONE_MODES:
+            odom_topic = self.get_parameter_or('odom_topic', Parameter('odom_topic', value=odom_topic)).value
+        self.create_subscription(Odometry, odom_topic, self.odom_cb, 10)  # car speed
         self.create_subscription(
             Odometry,
             '/car_state/frenet/odom',
@@ -119,8 +134,8 @@ class Controller(Node):
             10)  # car frenet coordinates
         self.create_subscription(LaserScan, '/scan', self.scan_cb, 10)  # lidar scan
 
-        if self.mode == "RL":
-            # The policy only needs the centerline and the state estimate: no global-waypoint wait, Frenet
+        if self.mode in self.STANDALONE_MODES:
+            # These only need the centerline and the state estimate: no global-waypoint wait, Frenet
             # converter or L1 tuning parameters.
             self.create_timer(1 / self.rate, self.control_loop)
             self.get_logger().info("Controller ready")
@@ -343,7 +358,6 @@ class Controller(Node):
     def init_rl_controller(self):
         # torch is an optional dependency, so only import the RL code when this mode is selected.
         try:
-            from controller.rl.observation import pose_in_frame
             from controller.rl.rl_controller import RL_Controller
         except ImportError as e:
             raise RuntimeError("RL mode needs PyTorch; build with `make build RL=cpu|gpu`") from e
@@ -357,7 +371,6 @@ class Controller(Node):
         # The odometry is for base_link (the rear axle); the policy was trained on the CoG pose (l_r in f1tenth_car.toml).
         self.rl_cog_offset = self.get_parameter_or('cog_offset_m', Parameter('cog_offset_m', value=0.14766)).value
 
-        self.pose_in_frame = pose_in_frame
         self.rl_controller = RL_Controller(checkpoint, device, direction, self.get_logger())
         self.rate = self.rl_controller.control_hz
         self.odom_msg = None
@@ -370,9 +383,70 @@ class Controller(Node):
         # use the default reliable/volatile profile, which also matches a latched publisher (without its history).
         self.create_subscription(WpntArray, '/centerline_waypoints', self.centerline_cb, QoSProfile(depth=1))
 
+    def init_mpc_controller(self):
+        from controller.mpc.mpc_controller import MPC_Controller
+
+        direction = self.get_parameter_or('direction', Parameter('direction', value='ccw')).value
+        self.rl_max_odom_age = self.get_parameter_or('max_odom_age_s', Parameter('max_odom_age_s', value=0.1)).value
+        self.mpc_controller = MPC_Controller(direction, self.get_logger())
+        self.rate = self.mpc_controller.control_hz
+        # The MPC's state is at the centre of gravity; the odometry is for base_link (the rear axle).
+        self.mpc_cog_offset = self.get_parameter_or(
+            'cog_offset_m', Parameter('cog_offset_m', value=self.mpc_controller.cog_offset)).value
+        self.odom_msg = None
+        self.applied_cmd = None  # latest (steer, speed, receive time) the actuation manager reported
+        # The state estimate is in the odom frame but the centerline in map: Cartographer's map->odom bridges them.
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        # Same QoS reasoning as in init_rl_controller.
+        self.create_subscription(WpntArray, '/centerline_waypoints', self.mpc_centerline_cb, QoSProfile(depth=1))
+        # The rate-limited command the car actually received: the MPC's rate-limit anchor and steering history.
+        self.create_subscription(AckermannDriveStamped, '/ackermann_cmd_applied', self.applied_cmd_cb, 1)
+        # The map-frame estimate counts the times it stepped (its correction was set from a SLAM pose); the plan
+        # lives in the old frame, so it is dropped. Latched, so the first value is only a baseline.
+        self.estimate_jumps = None
+        self.create_subscription(
+            UInt32, '/state_estimation/odom_map_jumps', self.estimate_jumps_cb,
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE))
+        self.odom_age = 0.0
+        self.diag_pub = self.create_publisher(DiagnosticArray, '/controller/diagnostics', 10)
+        self.create_timer(0.1, self.publish_mpc_diagnostics)
+
     #############
     # CALLBACKS #
     #############
+
+    def estimate_jumps_cb(self, msg: UInt32):
+        if self.estimate_jumps is not None and msg.data != self.estimate_jumps:
+            self.get_logger().warn("State estimate jumped; dropping the MPC plan")
+            self.mpc_controller.estimate_jumped()
+        self.estimate_jumps = msg.data
+
+    def publish_mpc_diagnostics(self):
+        """Solver timing, constraint slack and the plan's one-step prediction error on /controller/diagnostics (10 Hz)."""
+        values = self.mpc_controller.diagnostics()
+        level, message = self.mpc_controller.verdict(values)
+        status = DiagnosticStatus()
+        status.level = {'ok': DiagnosticStatus.OK, 'warn': DiagnosticStatus.WARN, 'error': DiagnosticStatus.ERROR}[level]
+        status.name = 'mpc'
+        status.message = message
+        status.hardware_id = 'controller'
+        status.values = [KeyValue(key=k, value=f'{v:.6g}') for k, v in values.items()]
+        msg = DiagnosticArray()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.status = [status]
+        self.diag_pub.publish(msg)
+
+    def mpc_centerline_cb(self, data: WpntArray):
+        if self.mpc_controller.has_track or not data.wpnts:
+            return
+        self.mpc_controller.set_centerline(
+            [(w.x_m, w.y_m) for w in data.wpnts], [w.d_left for w in data.wpnts], [w.d_right for w in data.wpnts])
+        self.get_logger().info(f"Received centerline with {len(data.wpnts)} points")
+
+    def applied_cmd_cb(self, data: AckermannDriveStamped):
+        self.applied_cmd = (data.drive.steering_angle, data.drive.speed, self.get_clock().now())
 
     def centerline_cb(self, data: WpntArray):
         if self.rl_controller.centerline is not None or not data.wpnts:
@@ -466,7 +540,7 @@ class Controller(Node):
             self.opponent = None
 
     def odom_cb(self, data: Odometry):
-        if self.mode == "RL":
+        if self.mode in self.STANDALONE_MODES:
             self.odom_msg = data
             return
         self.speed_now = data.twist.twist.linear.x
@@ -591,11 +665,12 @@ class Controller(Node):
         self.get_logger().warning("[STATE MACHINE] FTGONLY!!!")
         return speed, steer
 
-    def rl_cycle(self):
-        """Returns (speed, steer), or None while the centerline/odometry are missing or stale."""
-        if self.rl_controller.centerline is None or self.odom_msg is None:
+    def odom_in_map(self):
+        """The latest odometry as (x, y, yaw, twist) in the map frame, or None while it is missing or stale."""
+        if self.odom_msg is None:
             return None
         age = (self.get_clock().now() - rclpy.time.Time.from_msg(self.odom_msg.header.stamp)).nanoseconds * 1e-9
+        self.odom_age = age
         if age > self.rl_max_odom_age:
             self.get_logger().warn(f"Stale odometry ({age:.2f}s old); not driving", throttle_duration_sec=1.0)
             return None
@@ -614,10 +689,41 @@ class Controller(Node):
                 return None
             r = t.rotation
             frame_yaw = math.atan2(2.0 * (r.w * r.z + r.x * r.y), 1.0 - 2.0 * (r.y * r.y + r.z * r.z))
-            x, y, yaw = self.pose_in_frame(x, y, yaw, t.translation.x, t.translation.y, frame_yaw)
+            x, y, yaw = pose_in_frame(x, y, yaw, t.translation.x, t.translation.y, frame_yaw)
+        return x, y, yaw, twist
+
+    def rl_cycle(self):
+        """Returns (speed, steer), or None while the centerline/odometry are missing or stale."""
+        if self.rl_controller.centerline is None:
+            return None
+        state = self.odom_in_map()
+        if state is None:
+            return None
+        x, y, yaw, twist = state
         x += self.rl_cog_offset * math.cos(yaw)
         y += self.rl_cog_offset * math.sin(yaw)
         return self.rl_controller.main_loop(x, y, yaw, twist.linear.x, twist.angular.z)
+
+    def mpc_cycle(self):
+        """Returns (speed, steer), or None while the centerline/odometry are missing or stale."""
+        if not self.mpc_controller.has_track:
+            return None
+        state = self.odom_in_map()
+        if state is None:
+            self.mpc_controller.reset()  # the command history no longer matches what the car did
+            return None
+        x, y, yaw, twist = state
+        self.mpc_controller.note_odom_age(self.odom_age)
+        # The EKF's velocity is that of base_link, so its sideways part is the CoG's minus l_r * yaw_rate.
+        x, y, vy = base_link_to_cog(x, y, yaw, twist.linear.y, twist.angular.z, self.mpc_cog_offset)
+
+        # The command issued last cycle has now been applied for one period.
+        if self.mpc_controller.last_cmd is not None:
+            steer, speed = self.mpc_controller.last_cmd
+            if self.applied_cmd is not None and (self.get_clock().now() - self.applied_cmd[2]).nanoseconds * 1e-9 < 0.2:
+                steer, speed = self.applied_cmd[:2]
+            self.mpc_controller.report_applied(steer, speed)
+        return self.mpc_controller.main_loop(x, y, yaw, twist.linear.x, vy, twist.angular.z)
 
     def create_pid_msg(self, should, actual, error, d_value, i_value, input):
         pid_msg = PidData()
@@ -642,6 +748,11 @@ class Controller(Node):
             speed, steer = self.ftg_cycle()
         elif self.mode == "RL":
             cmd = self.rl_cycle()
+            if cmd is None:
+                return
+            speed, steer = cmd
+        elif self.mode == "MPC":
+            cmd = self.mpc_cycle()
             if cmd is None:
                 return
             speed, steer = cmd

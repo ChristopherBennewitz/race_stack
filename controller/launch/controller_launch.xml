@@ -1,10 +1,11 @@
 <?xml version="1.0"?>
 <launch>
   <arg name="LU_table" default="NUC5_hangar_pacejka"/>
-  <arg name="mode" default="MAP" description="Mode of operation: MAP / PP / RL / (FTG). methods in brackets have not been implemented"/> <!-- TODO implement PP and MAPPING -->
+  <arg name="mode" default="MAP" description="Mode of operation: MAP / PP / RL / MPC / (FTG). methods in brackets have not been implemented"/> <!-- TODO implement PP and MAPPING -->
   <arg name="checkpoint" default="" description="RL mode only: path to a checkpoint saved by f1tenth_parallel_sim scripts/train.py"/>
   <arg name="device" default="cpu" description="RL mode only: torch device"/>
-  <arg name="direction" default="ccw" description="RL mode only: 'ccw' / 'cw', the driving direction the policy was trained for"/>
+  <arg name="direction" default="ccw" description="RL / MPC modes only: 'ccw' / 'cw', the driving direction (the RL policy was trained for one)"/>
+  <arg name="odom_topic" default="/state_estimation/odom" description="RL / MPC modes only: the state estimate, in any frame. /state_estimation/odom_map is the smooth map-frame one (local odometry plus the corrected map-&gt;odom, from state_estimation's map_odom_node; the simulator does not publish it)"/>
   <arg name="sim_opp" default="False" description="True to remap topics to the simulated opponent ones" />
 
   <!--  launch L1 controller -->
@@ -23,6 +24,7 @@
         <param name="checkpoint" value="$(var checkpoint)"/>
         <param name="device" value="$(var device)"/>
         <param name="direction" value="$(var direction)"/>
+        <param name="odom_topic" value="$(var odom_topic)"/>
     </node>
   </group>
 

@@ -29,6 +29,11 @@
     <include file="$(find-pkg-share state_estimation)/launch/state_estimation_launch.xml">
         <arg name="racecar_version" value="$(var racecar_version)" />
         <arg name="mapping_bool" value="True" />
+        <!-- The odometry prior is the same SLAM-free local filter the controllers' stack localizes with. There is no
+             map yet to correct towards, so the map-frame output (global_ekf) is off. -->
+        <arg name="custom_ekf" value="True" />
+        <arg name="ekf_model_type" value="simulator_single_track_model" />
+        <arg name="global_ekf" value="False" />
         <arg name="map_name" value="$(var map_name)" />
         <arg name="use_sim_time" value="False" />
     </include>

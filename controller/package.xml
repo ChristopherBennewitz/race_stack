@@ -15,8 +15,11 @@
   <exec_depend>ros2launch</exec_depend>
   <depend>rclpy</depend>
   <depend>tf2_ros</depend>
+  <depend>diagnostic_msgs</depend>
 
   <exec_depend>stack_master</exec_depend>
+  <!-- Optional: only needed for mode:=MPC. It builds against acados and is skipped when that is missing. -->
+  <exec_depend>progress_mpc</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>
