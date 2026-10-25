@@ -47,6 +47,12 @@ ADD ./.install_utils/torch_cpu_req.txt /.install_utils/torch_cpu_req.txt
 ADD ./.install_utils/torch_gpu_req.txt /.install_utils/torch_gpu_req.txt
 RUN chmod +x /.install_utils/torch_setup.sh && TORCH_GPU_INDEX_URL="$TORCH_GPU_INDEX_URL" /.install_utils/torch_setup.sh "$RL_TORCH" "$PLATFORM"
 
+# acados for the progress_mpc package (controller manager's MPC mode); the package skips itself without it
+ADD ./.install_utils/acados_setup.sh /.install_utils/acados_setup.sh
+RUN chmod +x /.install_utils/acados_setup.sh && /.install_utils/acados_setup.sh /opt/acados
+ENV ACADOS_SOURCE_DIR=/opt/acados
+ENV LD_LIBRARY_PATH=/opt/acados/lib:${LD_LIBRARY_PATH}
+
 ADD ./.install_utils /.install_utils
 RUN useradd -ms /bin/bash -u ${UID} -G sudo ${USER} && groupadd -fg ${GID} ${USER} \
     && echo "${USER} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers

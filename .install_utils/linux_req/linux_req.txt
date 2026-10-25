@@ -29,3 +29,5 @@ ros-humble-rqt*
 ros-humble-rqt-common-plugins
 ros-humble-realsense2-*
 ros-humble-joy-linux
+pybind11-dev
+cmake
