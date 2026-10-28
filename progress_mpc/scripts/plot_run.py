@@ -43,14 +43,27 @@ THEMES = {
                   corridor="#d6d5cf", lap="#2a78d6", mean="#184f95", accent="#eb6834", cmd="#eb6834"),
     "dark": dict(surface="#1a1a19", ink="#f0efec", ink2="#c3c2b7", muted="#8c8b83", grid="#2c2c2a", track="#5a5955",
                  corridor="#3d3c39", lap="#3987e5", mean="#cde2fb", accent="#d95926", cmd="#d95926"),
+    # matplotlib's own look: white, black, boxed axes, the default blue and orange
+    "plain": dict(surface="white", ink="black", ink2="black", muted="gray", grid="#dddddd", track="dimgray",
+                  corridor="gray", lap="tab:blue", mean="black", accent="tab:red", cmd="tab:orange"),
 }
 SLIDE = (13.333, 7.5)
+PLAIN = (10.0, 6.0)
+SCALE = 1.0  # text sizes below are for the 13.3 inch slide; the plain theme scales them down
+
+
+def fs(size: float) -> float:
+    return size * SCALE
 CLEARANCE = 0.384  # the MPC keeps the centre of gravity this far inside the track limits (collision radius + margin)
 
 
-def setup_matplotlib(theme: dict):
+def setup_matplotlib(theme: dict, plain: bool = False):
     import matplotlib as mpl
 
+    if plain:
+        mpl.rcdefaults()
+        mpl.rcParams.update({"svg.fonttype": "none", "figure.dpi": 100, "savefig.dpi": 150})
+        return
     mpl.rcParams.update({
         "font.family": "DejaVu Sans", "font.size": 15, "axes.titlesize": 16, "axes.labelsize": 15,
         "xtick.labelsize": 14, "ytick.labelsize": 14, "legend.fontsize": 14,
@@ -109,12 +122,12 @@ class Context:
 
 
 def title(fig, text: str, sub: str, theme: dict) -> None:
-    fig.text(0.045, 0.955, text, fontsize=24, fontweight="bold", color=theme["ink"], va="top", ha="left")
-    fig.text(0.045, 0.895, sub, fontsize=14, color=theme["ink2"], va="top", ha="left")
+    fig.text(0.045, 0.955, text, fontsize=fs(24), fontweight="normal" if SCALE < 1 else "bold", color=theme["ink"], va="top", ha="left")
+    fig.text(0.045, 0.895, sub, fontsize=fs(14), color=theme["ink2"], va="top", ha="left")
 
 
 def lap_label(ax, x, y, text, theme, **kw) -> None:
-    ax.text(x, y, text, color=theme["ink2"], fontsize=14, va=kw.pop("va", "bottom"), ha=kw.pop("ha", "left"), **kw)
+    ax.text(x, y, text, color=theme["ink2"], fontsize=fs(14), va=kw.pop("va", "bottom"), ha=kw.pop("ha", "left"), **kw)
 
 
 # ---------------------------------------------------------------------------------------------------------- panels
@@ -142,7 +155,7 @@ def draw_map(ax, ctx: Context, theme: dict, compact: bool = False) -> None:
     p0, n0 = t.xy[0], t.normal[0]
     a, b = p0 + n0 * t.w_left[0], p0 - n0 * t.w_right[0]
     ax.plot([a[0], b[0]], [a[1], b[1]], color=theme["ink"], lw=2.0, zorder=2)
-    ax.annotate("start / finish", xy=b, xytext=(10, -22), textcoords="offset points", color=theme["ink2"], fontsize=14)
+    ax.annotate("start / finish", xy=b, xytext=(10, -22), textcoords="offset points", color=theme["ink2"], fontsize=fs(14))
     ax.plot([], [], color=theme["track"], lw=2.0, label="track limits")
     ax.plot([], [], color=theme["corridor"], lw=1.4, ls=(0, (4, 3)), label="MPC corridor")
     ax.set_aspect("equal"); ax.grid(False); ax.set_xticks([]); ax.set_yticks([])
@@ -151,9 +164,9 @@ def draw_map(ax, ctx: Context, theme: dict, compact: bool = False) -> None:
     if compact:
         if ctx.final is not None:  # the lateral panel's legend names the rest
             ax.annotate("last lap ends\nat the wall", xy=ctx.final.xy[-1], xytext=(-8, 8), textcoords="offset points",
-                        color=theme["accent"], fontsize=12, ha="right", va="bottom")
+                        color=theme["accent"], fontsize=fs(12), ha="right", va="bottom")
     else:
-        ax.legend(loc="center left", bbox_to_anchor=(1.03, 0.5), frameon=False, labelcolor=theme["ink2"], handlelength=2.2, fontsize=13)
+        ax.legend(loc="center left", bbox_to_anchor=(1.03, 0.5), frameon=False, labelcolor=theme["ink2"], handlelength=2.2, fontsize=fs(13))
 
 
 def draw_lateral(ax, ctx: Context, theme: dict, label_laps: bool = True, compact: bool = False) -> None:
@@ -169,7 +182,7 @@ def draw_lateral(ax, ctx: Context, theme: dict, label_laps: bool = True, compact
     ax.set_xlim(0, ctx.track.length); ax.set_ylabel("lateral offset (m, left +)")
     lim = max(np.nanmax(np.abs(ctx.limit_left)), np.nanmax(np.abs(ctx.limit_right))) * 1.05
     ax.set_ylim(-lim, lim)
-    ax.legend(loc="lower left", bbox_to_anchor=(0.0, 1.01), ncol=5, frameon=False, labelcolor=theme["ink2"], fontsize=11 if compact else 13, handlelength=1.4 if compact else 1.8, columnspacing=0.9 if compact else 1.4)
+    ax.legend(loc="lower left", bbox_to_anchor=(0.0, 1.01), ncol=5, frameon=False, labelcolor=theme["ink2"], fontsize=fs(11 if compact else 13), handlelength=1.4 if compact else 1.8, columnspacing=0.9 if compact else 1.4)
 
 
 def draw_spread(ax, ctx: Context, theme: dict) -> None:
@@ -177,7 +190,7 @@ def draw_spread(ax, ctx: Context, theme: dict) -> None:
     ax.plot(ctx.grid, 100 * ctx.spread, color=theme["lap"], lw=2.0)
     med = ctx.stats["lateral_spread_median_cm"]
     ax.axhline(med, color=theme["ink2"], lw=1.2, ls=(0, (5, 3)))
-    ax.text(0.30, 0.93, f"dashed: median {med:.1f} cm", transform=ax.transAxes, color=theme["ink2"], fontsize=14, va="top", ha="left")
+    ax.text(0.30, 0.93, f"dashed: median {med:.1f} cm", transform=ax.transAxes, color=theme["ink2"], fontsize=fs(14), va="top", ha="left")
     ax.set_xlim(0, ctx.track.length); ax.set_ylim(0, None); ax.set_ylabel("spread, 1σ (cm)")
 
 
@@ -186,7 +199,7 @@ def draw_speed(ax, ctx: Context, theme: dict) -> None:
         ax.plot(ctx.grid, v, color=theme["lap"], lw=1.2, alpha=0.55, label="each lap" if i == 0 else None)
     ax.plot(ctx.grid, ctx.mean_speed, color=theme["mean"], lw=2.4, label="mean of all laps")
     ax.set_xlim(0, ctx.track.length); ax.set_ylim(0, None); ax.set_ylabel("speed (m/s)")
-    ax.legend(loc="lower left", bbox_to_anchor=(0.0, 1.01), ncol=2, frameon=False, labelcolor=theme["ink2"], fontsize=13)
+    ax.legend(loc="lower left", bbox_to_anchor=(0.0, 1.01), ncol=2, frameon=False, labelcolor=theme["ink2"], fontsize=fs(13))
 
 
 def draw_lap_times(ax, ctx: Context, theme: dict) -> None:
@@ -196,11 +209,12 @@ def draw_lap_times(ax, ctx: Context, theme: dict) -> None:
     for b in bars:  # 4 px rounded data-ends would need patches; plain bars with a surface gap keep the spec simple
         b.set_edgecolor(theme["surface"]); b.set_linewidth(2)
     for x, tm in zip(xs, times):
-        ax.text(x, tm + 0.12, f"{tm:.1f} s", ha="center", va="bottom", fontsize=16, color=theme["ink"], fontweight="bold", zorder=6,
+        ax.text(x, tm + 0.12, f"{tm:.1f} s", ha="center", va="bottom", fontsize=fs(16), color=theme["ink"], fontweight="bold", zorder=6,
                 bbox=dict(facecolor=theme["surface"], edgecolor="none", pad=1.5))
     mean = float(np.mean(times))
     ax.axhline(mean, color=theme["ink2"], lw=1.4, ls=(0, (5, 3)), zorder=4)
-    ax.text(len(times) + 0.62, mean, f"mean\n{mean:.1f} s", color=theme["ink2"], fontsize=14, va="center", ha="left")
+    ax.text(len(times) + 0.62, mean, f"mean\n{mean:.1f} s", color=theme["ink2"], fontsize=fs(14), va="center", ha="left",
+            bbox=dict(facecolor=theme["surface"], edgecolor="none", pad=2))
     ax.set_xticks(xs); ax.set_xticklabels([f"lap {k}" for k in xs]); ax.set_ylim(0, max(times) * 1.18)
     ax.set_xlim(0.4, len(times) + 1.4); ax.set_ylabel("lap time (s)"); ax.grid(axis="x", visible=False)
 
@@ -216,14 +230,14 @@ def draw_commands(axes, ctx: Context, theme: dict) -> None:
     top.plot(drive[:, 0], drive[:, 2], color=theme["lap"], lw=1.4)
     for level in (-0.3, 0.3):
         top.axhline(level, color=theme["track"], lw=1.2)
-    top.text(drive[-1, 0], 0.3, "steering limit ±0.3 rad ", color=theme["ink2"], fontsize=14, ha="right", va="bottom")
+    top.text(drive[-1, 0], 0.3, "steering limit ±0.3 rad ", color=theme["ink2"], fontsize=fs(14), ha="right", va="bottom")
     top.set_ylabel("steering (rad)"); top.set_ylim(-0.38, 0.38)
     bottom.plot(odom[:, 0], odom[:, 4], color=theme["lap"], lw=1.6)
     bottom.plot(drive[:, 0], drive[:, 1], color=theme["cmd"], lw=1.4, alpha=0.9)
     bottom.set_ylabel("speed (m/s)"); bottom.set_xlabel("time (s)"); bottom.set_ylim(0, None)
     bottom.legend(handles=[Line2D([], [], color=theme["lap"], lw=2.4, label="measured speed"),
                            Line2D([], [], color=theme["cmd"], lw=2.4, label="speed command")],
-                  loc="lower left", bbox_to_anchor=(0.0, 1.01), ncol=2, frameon=False, labelcolor=theme["ink2"], fontsize=13)
+                  loc="lower left", bbox_to_anchor=(0.0, 1.01), ncol=2, frameon=False, labelcolor=theme["ink2"], fontsize=fs(13))
     top.set_xlim(0, odom[-1, 0]); bottom.set_xlim(0, odom[-1, 0])
 
 
@@ -232,14 +246,17 @@ def draw_commands(axes, ctx: Context, theme: dict) -> None:
 def figure(name: str, ctx: Context, theme_name: str, out: Path) -> None:
     import matplotlib.pyplot as plt
 
+    global SCALE
     theme = THEMES[theme_name]
-    setup_matplotlib(theme)
+    plain = theme_name == "plain"
+    SCALE = 0.6 if plain else 1.0
+    setup_matplotlib(theme, plain)
     s = ctx.stats
-    fig = plt.figure(figsize=SLIDE)
+    fig = plt.figure(figsize=PLAIN if plain else SLIDE)
     if name == "00_summary":
         gs = fig.add_gridspec(2, 2, left=0.07, right=0.985, top=0.78, bottom=0.085, wspace=0.17, hspace=0.55)
         draw_map(fig.add_subplot(gs[0, 0]), ctx, theme, compact=True)
-        ax_lat = fig.add_subplot(gs[0, 1]); draw_lateral(ax_lat, ctx, theme, compact=True); ax_lat.set_xlabel("distance along the track (m)"); ax_lat.set_ylabel("lateral offset (m)", fontsize=13)
+        ax_lat = fig.add_subplot(gs[0, 1]); draw_lateral(ax_lat, ctx, theme, compact=True); ax_lat.set_xlabel("distance along the track (m)"); ax_lat.set_ylabel("lateral offset (m)", fontsize=fs(13))
         draw_lap_times(fig.add_subplot(gs[1, 0]), ctx, theme)
         ax_sp = fig.add_subplot(gs[1, 1]); draw_speed(ax_sp, ctx, theme); ax_sp.set_xlabel("distance along the track (m)")
         title(fig, f"{s['complete_laps']} laps of {s['lap_time_mean_s']:.1f} s (σ {s['lap_time_std_s']:.1f} s), "
@@ -265,7 +282,7 @@ def figure(name: str, ctx: Context, theme_name: str, out: Path) -> None:
         a1 = fig.add_subplot(gs[0]); a2 = fig.add_subplot(gs[1], sharex=a1); draw_commands((a1, a2), ctx, theme)
         title(fig, "What the controller commanded over the whole drive", ctx.subtitle + " · dotted lines mark laps", theme)
     for ext in ("png", "svg"):
-        fig.savefig(out / f"{name}_{theme_name}.{ext}", dpi=200)
+        fig.savefig(out / f"{name}_{theme_name}.{ext}", dpi=150 if plain else 200)
     plt.close(fig)
 
 
@@ -278,7 +295,7 @@ def main() -> None:
     parser.add_argument("--map", type=Path, required=True, help="map folder with global_waypoints.json (stack_master/maps/<name>)")
     parser.add_argument("--direction", choices=("ccw", "cw"), default="ccw")
     parser.add_argument("--clearance", type=float, default=CLEARANCE, help="MPC clearance inside the track limits (m)")
-    parser.add_argument("--theme", choices=("light", "dark", "both"), default="light")
+    parser.add_argument("--theme", choices=("light", "dark", "both", "plain"), default="light")
     parser.add_argument("--out", type=Path, help="default: mpc_plots/<bag name>")
     args = parser.parse_args()
 

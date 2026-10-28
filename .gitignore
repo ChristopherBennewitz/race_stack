@@ -60,3 +60,7 @@ sysid_bags/
 .env
 
 bags/
+
+# MPC drive recordings and the plots made from them
+mpc_run*/
+mpc_plots/
