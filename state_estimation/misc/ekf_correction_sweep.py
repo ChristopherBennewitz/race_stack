@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""The smooth map-frame pose (local odometry + low-passed map->odom) against the global EKF, over a time constant.
+"""The smooth map-frame pose (local odometry + low-passed map->odom), over a time constant.
 
 Replays the local filter on each take once, then feeds its pose and the SLAM poses to ``MapOdomCorrection`` for each
-``tau`` and reports what ``ekf_global_sweep.py`` reports for the global EKF, so the rows are comparable:
+``tau`` and reports:
 
-- jitter: RMS acceleration (m/s^2) implied by the second difference of the output position at 100 Hz (local filter: the
-  target; the global EKF with its adopted settings: 89).
+- jitter: RMS acceleration (m/s^2) implied by the second difference of the output position at 100 Hz (the local
+  filter's own is the target).
 - tracking: RMS distance (cm) between each SLAM pose and what the output said at that moment (of the output).
 - lag: the RMS of the same, restricted to the drift the local odometry accumulates, is not separable from pose noise;
   read tracking together with jitter. A tau that is too large shows as tracking growing.
@@ -23,10 +23,17 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ekf_global_sweep import jitter  # noqa: E402
-from ekf_replay import Engine, FilterConfig, SlamConfig, load_pose_file, replay, wrap  # noqa: E402
+from ekf_replay import Engine, FilterConfig, load_pose_file, replay  # noqa: E402
 from state_estimation.ekf_node import defaults  # noqa: E402
 from state_estimation.ekf_node.map_odom_correction import MapOdomCorrection  # noqa: E402
+
+
+def jitter(rows):
+    """RMS acceleration (m/s^2) from the second difference of the filter's base_link position, over consecutive ticks."""
+    t, xy = rows[:, 0], rows[:, 11:13]
+    ok = (np.abs(np.diff(t)[1:] - 0.01) < 1e-6) & (np.abs(np.diff(t)[:-1] - 0.01) < 1e-6)
+    accel = (xy[2:] - 2 * xy[1:-1] + xy[:-2]) / 0.01 ** 2
+    return float(np.sqrt((np.linalg.norm(accel[ok], axis=1) ** 2).mean()))
 
 
 def yaw_jitter(rows):
@@ -40,7 +47,7 @@ def yaw_jitter(rows):
 def output_tracking(rows, pose):
     """RMS distance (m) between each SLAM pose and the output at the pose's content time. It includes the pose's own
     noise, so compare settings with each other, not with zero; a lag shows up as growth."""
-    t = pose[:, 1] - defaults.SLAM['pose_delay']
+    t = pose[:, 1] - defaults.POSE_DELAY
     inside = (t > rows[0, 0]) & (t < rows[-1, 0])
     x = np.interp(t[inside], rows[:, 0], rows[:, 11])
     y = np.interp(t[inside], rows[:, 0], rows[:, 12])
@@ -117,19 +124,6 @@ def main():
                 print(f'{label:34s} {rms("jitter"):7.0f} {rms("yaw_jitter"):8.1f} {np.mean([s["track"] for s in res]) * 100:7.1f} cm '
                       f'{np.mean([s["vx"] for s in res]):6.3f} {np.mean([s["wz"] for s in res]):6.3f} '
                       f'{sum(s["rejected"] for s in res):9d} {sum(s["jumps"] for s in res):6d}', flush=True)
-        if r_yaw is None:  # the global EKF with the adopted settings, for the same columns
-            local = defaults.NOISE
-            res = []
-            for (name, bag), (_, _, pose) in zip(bags, takes):
-                config = FilterConfig()
-                config.Q = np.diag(np.array(defaults.NOISE_GLOBAL['Q'], dtype=float))
-                slam = SlamConfig(R=np.diag(defaults.SLAM['R_slam_pose']), pose=pose)
-                rows, stats = replay(bag, config, engine, slam)
-                res.append({'jitter': jitter(rows), 'yaw_jitter': yaw_jitter(rows), 'track': output_tracking(rows, pose),
-                            'vx': speeds(rows)[0], 'wz': speeds(rows)[1]})
-            rms = lambda key: np.sqrt(np.mean([s[key] ** 2 for s in res]))
-            print(f'{"  global EKF (adopted)":34s} {rms("jitter"):7.0f} {rms("yaw_jitter"):8.1f} {np.mean([s["track"] for s in res]) * 100:7.1f} cm '
-                  f'{np.mean([s["vx"] for s in res]):6.3f} {np.mean([s["wz"] for s in res]):6.3f}', flush=True)
 
 
 if __name__ == '__main__':

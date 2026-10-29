@@ -5,10 +5,9 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'misc'))
-from ekf_fast import FastFilter, FastGlobalFilter, FastGlobalReplay, FastReplay  # noqa: E402
-from ekf_replay import Engine, FilterConfig, SlamConfig, load_pose_file, replay  # noqa: E402
-from ekf_tune import (GLOBAL_PARAMETERS, PARAMETERS, nominal_vector, nominal_vector_global,  # noqa: E402
-                      parse_constraints, to_config, to_global_config)
+from ekf_fast import FastFilter, FastReplay  # noqa: E402
+from ekf_replay import Engine, FilterConfig, load_pose_file, replay  # noqa: E402
+from ekf_tune import PARAMETERS, nominal_vector, parse_constraints, to_config  # noqa: E402
 from state_estimation.ekf_node import defaults  # noqa: E402
 
 
@@ -59,45 +58,6 @@ def test_noisier_noise_settings_score_a_worse_likelihood_on_clean_data():
     assert nll(loose) > nll(base)
 
 
-def with_pose(bag, speed=1.5, jump_at=None, jump=0.15, rate=80.0):
-    """The straight drive's SLAM pose at ``rate``: stamped at the car's pose, received 10 ms later."""
-    t = np.arange(0.0, bag['imu'][-1, 0], 1.0 / rate)
-    x = speed * t + np.where((jump_at is not None) & (t >= (jump_at or 0)), jump, 0.0)
-    bag = dict(bag)
-    bag['pose'] = np.column_stack([t + 0.01, t, x, np.zeros_like(t), np.zeros_like(t)])
-    return bag
-
-
-def test_global_replay_anchors_the_pose_to_slam_and_is_consistent_on_clean_data():
-    bag = with_pose(straight_drive_bag())
-    rows, stats = replay(bag, FilterConfig(), Engine(), SlamConfig(delay=0.0))
-    slam = stats['slam']
-    assert slam['outcomes'].get('updated', 0) > 500 and slam['gated'] == 0 and slam['reseeds'] == 0
-    assert np.mean(slam['nis']) < 3.0
-    np.testing.assert_allclose(rows[-1, 11:14], [1.5 * rows[-1, 0], 0.0, 0.0], atol=0.1)  # the filter's base_link pose
-
-
-def test_global_replay_absorbs_a_slam_step_gradually():
-    bag = with_pose(straight_drive_bag(seconds=10.0), jump_at=5.0)
-    responsive = SlamConfig(R=np.diag([0.01, 0.01, 0.005]), delay=0.0)  # a tight pose variance, not the node's default
-    rows, stats = replay(bag, FilterConfig(), Engine(), responsive)
-    x = rows[:, 11]
-    steps = np.diff(x)[np.searchsorted(rows[:-1, 0], 5.0):]
-    assert steps.max() - 1.5 * 0.01 < 0.02  # the 15 cm step is spread over many ticks
-    assert abs(x[-1] - 1.5 * rows[-1, 0] - 0.15) < 0.03  # and ends up at the new pose
-
-
-def test_the_default_global_filter_follows_a_slam_step_smoothly_and_without_a_reseed():
-    bag = with_pose(straight_drive_bag(seconds=12.0), jump_at=5.0)
-    config = FilterConfig.for_global()
-    rows, stats = replay(bag, config, Engine(), SlamConfig(delay=0.0))
-    x = rows[:, 11]
-    steps = np.diff(x)[np.searchsorted(rows[:-1, 0], 5.0):]
-    assert stats['slam']['reseeds'] == 0 and stats['slam']['gated'] == 0
-    assert steps.max() - 1.5 * 0.01 < 0.25 * 0.15  # no tick takes more than a quarter of the 15 cm step (about 13 % in the first)
-    assert abs(x[-1] - 1.5 * rows[-1, 0] - 0.15) < 0.08  # and it has taken most of the step within seven seconds
-
-
 def test_pose_files_become_replay_rows(tmp_path):
     path = tmp_path / 'pose.csv'
     np.savetxt(path, np.array([[1.0, 2.0, 3.0, 0.5], [2.0, 4.0, 6.0, 0.6]]), delimiter=',')
@@ -144,53 +104,3 @@ def test_constraints_parse_names_and_values():
     assert floors[PARAMETERS.index('R_imu[yaw]')] == pytest.approx(np.log10(0.5))
     with pytest.raises(SystemExit):
         parse_constraints(['R_vesc[typo]'], [])
-
-
-def test_the_global_nominal_vector_reproduces_the_global_defaults():
-    config, slam = to_global_config(nominal_vector_global(), defaults.SLAM['pose_delay'])
-    np.testing.assert_allclose(np.diag(config.Q), defaults.NOISE_GLOBAL['Q'])
-    np.testing.assert_allclose(np.diag(config.R_imu)[1:], defaults.NOISE_GLOBAL['R_imu'][1:])
-    np.testing.assert_allclose(np.diag(config.R_vesc), defaults.NOISE_GLOBAL['R_vesc'])
-    np.testing.assert_allclose(np.diag(slam.R), defaults.SLAM['R_slam_pose'])
-    assert len(nominal_vector_global()) == len(GLOBAL_PARAMETERS)
-
-
-def test_global_constraints_use_the_global_names():
-    fixed, floors = parse_constraints(['R_slam[xy]=0.01'], ['R_slam[yaw]=0.001'], GLOBAL_PARAMETERS, nominal_vector_global())
-    assert fixed[GLOBAL_PARAMETERS.index('R_slam[xy]')] == pytest.approx(-2.0)
-    assert floors[GLOBAL_PARAMETERS.index('R_slam[yaw]')] == pytest.approx(-3.0)
-    with pytest.raises(SystemExit):
-        parse_constraints(['R_imu[yaw]'], [], GLOBAL_PARAMETERS, nominal_vector_global())  # not a global parameter
-
-
-def noisy_pose_track(bag, seed=2, rate=40.0, jump_at=6.0):
-    """A SLAM pose for the maneuvering bag: noisy, stamped before it arrives, with a step and a glitch to gate."""
-    rng = np.random.default_rng(seed)
-    t = np.arange(0.5, bag['imu'][-1, 0] - 0.5, 1.0 / rate)
-    x = np.interp(t, bag['odom'][:, 0], bag['odom'][:, 1]) + 0.02 * rng.normal(size=t.size) + np.where(t > jump_at, 0.3, 0.0)
-    y = 0.02 * rng.normal(size=t.size)
-    y[len(t) // 3] += 2.0  # one wild pose
-    yaw = 0.01 * rng.normal(size=t.size)
-    return np.column_stack([t + 0.012, t, x, y, yaw])
-
-
-def test_the_compiled_global_evaluator_reproduces_the_python_replay():
-    engine = Engine()
-    bag = maneuvering_bag()
-    pose = noisy_pose_track(bag)
-    config = FilterConfig.for_global()
-    fast = FastGlobalFilter(engine)
-    for slam in (SlamConfig(pose=pose, delay=0.02),
-                 SlamConfig(R=np.diag([0.0004, 0.0004, 0.0005]), delay=0.03, gate=5.0, reseed_after=3, pose=pose)):
-        result = FastGlobalReplay(bag, config, slam, engine, fast).run(config, slam)
-        _, stats = replay(bag, config, engine, slam)
-        s = stats['slam']
-        assert result['pose_accepted']['count'] == s['count'] and result['pose_nis_count'] == len(s['nis'])
-        assert result['pose_accepted']['nll'] == pytest.approx(s['nll'], rel=1e-4)
-        assert result['count']['pose'] == s['count_all'] and result['nll']['pose'] == pytest.approx(s['nll_clipped'], rel=1e-4)
-        assert result['gated'] == s['gated'] and result['reseeds'] == s['reseeds']
-        assert result['nis_sum']['pose'] == pytest.approx(float(np.sum(s['nis'])), rel=1e-4)
-        for sensor in ('imu', 'vesc'):
-            assert result['count'][sensor] == stats['count'][sensor]
-            assert result['nll'][sensor] == pytest.approx(stats['nll'][sensor], rel=1e-4)
-    assert result['reseeds'] >= 1 or result['gated'] >= 1  # the harsh setting exercises the gate

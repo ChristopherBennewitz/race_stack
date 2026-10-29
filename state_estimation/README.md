@@ -9,7 +9,7 @@ The resulting car state is exposed as:
 - TF `map -> base_link` (and the alias `car_state/base_link`): the car pose from localization.
 - `/car_state/pose`: the same pose as `PoseStamped`, published by `carstate_node` on the physical car (the simulator publishes it directly).
 - `/state_estimation/odom`: the local EKF's estimate in the `odom` frame (twist in the `base_link` frame). It never sees SLAM; Cartographer starts from it.
-- `/state_estimation/odom_map`: the estimate for the controllers, in the `map` frame, smooth where `map -> odom` jumps (`odom_topic:=/state_estimation/odom_map`). By default (`global_type:=correction`, `map_odom_node`) it is the local odometry moved into the map frame by a slowly corrected `map -> odom`, so position, heading and the whole twist are as smooth as the local filter's. `global_type:=ekf` runs the global EKF instead (needs `custom_ekf:=True` and the simulator model). Turn it off with `global_ekf:=False`.
+- `/state_estimation/odom_map`: the estimate for the controllers, in the `map` frame, smooth where `map -> odom` jumps (`odom_topic:=/state_estimation/odom_map`). It is published by `map_odom_node`: the local odometry moved into the map frame by a slowly corrected `map -> odom`, so position, heading and the whole twist are as smooth as the local filter's. Turn it off with `global_ekf:=False`.
 - `/car_state/frenet/odom`: pose and velocity in the Frenet frame, published by the `frenet_odom_republisher` node (`utilities/nodes/frenet_odom_republisher`), which combines the TF pose with `/state_estimation/odom`. Launched for both simulation and the physical car by `stack_master/launch/base_system_launch.xml`.
 
 ## Kalman Filter ##
@@ -22,7 +22,7 @@ model in `f1tenth_parallel_sim`; it estimates
 commands as inputs. The transition, its Jacobian, and both measurement
 Jacobians are all derived from one CasADi graph (`ca.jacobian`), so the
 Jacobians used by the filter can never drift out of sync with the model that
-is actually stepped forward. VIO is intentionally not integrated. A second instance of the node, the *global* filter, adds the SLAM pose (see `docs/ekf_formulation.md`, Section 5b). The nominal
+is actually stepped forward. VIO is intentionally not integrated. The nominal
 vehicle and tire values are ROS parameters, defaulting to the simulator's
 `f1tenth_car.toml`; override them per car in a launch file rather than relying
 on an external configuration package.
@@ -61,18 +61,15 @@ node and the replay both start from. `--evaluate-only` reports the current defau
 accelerometer bias. The sysid bags' SLAM pose came from the live estimator's odometry, so the velocity reference is
 not independent of it. Parameters that end up on the search bound are not determined by the data.
 
-### Replaying the global filter, and an independent SLAM pose
+### An independent SLAM pose
 
-`misc/ekf_replay.py --global` replays the global filter (the local one plus the SLAM pose) on the same bags;
-`--estimate-delay` sweeps the pose delay and reports the one with the most likely pose innovations. The takes' own
-`/car_state/pose` was computed from the live estimator's odometry, so it flatters the filter and biases that delay
-towards zero. `misc/offline_slam_poses.py` re-runs Cartographer on a take's `/scan` (and `/tf_static`) alone, with
-no odometry and no IMU, inside the race_stack container:
+The takes' own `/car_state/pose` was computed from the live estimator's odometry, so it is not independent of the filter.
+`misc/offline_slam_poses.py` re-runs Cartographer on a take's `/scan` (and `/tf_static`) alone, with no odometry and no IMU,
+inside the race_stack container. Its poses are the reference for `ekf_replay.py --reference-dir` and the input of
+`ekf_correction_sweep.py --pose-dir`:
 
 ```
 python3 state_estimation/misc/offline_slam_poses.py sysid_bags/sysid_* --out-dir sysid_poses       # add --map X.pbstream to localize
-f1tenth_parallel_sim/.venv/bin/python state_estimation/misc/ekf_replay.py sysid_bags/sysid_<take> \
-    --global --pose-dir sysid_poses --estimate-delay
 ```
 
 `--dry-run` prints the Cartographer configuration and the three commands. It is untested against a live
@@ -80,23 +77,14 @@ f1tenth_parallel_sim/.venv/bin/python state_estimation/misc/ekf_replay.py sysid_
 the path length should match the take's driven distance). See the docstring for what the resulting pose does and does
 not represent.
 
-### Tuning the global filter
-
-`ekf_tune.py --global --pose-dir ...` fits the global filter's dynamics noise the same way (compiled replay including the
-pose update, delay, gate and re-seeding; checked against `ekf_replay.py --global`). Its pose-related parameters
-(`R_slam`, the position process noise) cannot be fitted this way (the likelihood drives them to the "follow the previous
-pose" extreme), so `misc/ekf_global_sweep.py` lays out jitter, tracking, gated poses and re-seeds over a grid of them
-instead; the defaults come from its table (`docs/ekf_formulation.md`, section 5).
-
 ### The smooth map-frame output
 
 `map_odom_node` (`ekf_node/map_odom_correction.py`, no ROS) keeps a rigid transform `map <- odom` and its rate, follows
 the SLAM pose with a critically damped alpha-beta filter (`tau`, bandwidth 1/tau) and a further short lag on the output
 (`smooth`), and publishes the local odometry through it. Parameters are in `defaults.CORRECTION`;
-`misc/ekf_correction_sweep.py` replays the local filter on the bags and compares it with the global EKF (jitter,
-distance from the SLAM pose, yaw smoothness, velocity accuracy), also over `tau` and `smooth`. On the six takes with
-independent poses: position jitter 32 m/s^2 against the global EKF's 88 and the local filter's 16, at the same 5 cm from the
-SLAM pose. Details and the trade-offs: `docs/ekf_formulation.md`, section 5d.
+`misc/ekf_correction_sweep.py` replays the local filter on the bags and reports the corrected output's jitter, distance from the SLAM pose, yaw
+smoothness and velocity accuracy, also over `tau` and `smooth`. On the six takes with independent poses: position jitter
+32 m/s^2 against the local filter's 16, at 5 cm from the SLAM pose (a global EKF that fused the pose had 88 at the same distance, and was removed). Details and the trade-offs: `docs/ekf_formulation.md`, section 5d.
 
 ### Observability
 
@@ -105,8 +93,8 @@ values; `ros2 topic echo` shows the messages), and the MPC on `/controller/diagn
 
 | status name | rate | what to look at |
 |---|---|---|
-| `ekf_local/<sensor>`, `ekf_global/<sensor>` | 1 Hz | `nis_mean` against `nis_expected`: the filter's live calibration, the same statistic `ekf_tune.py` optimises. `nis_ratio` > 2 means over-confident (noise too small), < 0.1 far too loose; the status turns WARN. The NIS is only counted while the car is moving (above 0.3 m/s or 0.2 rad/s): a parked car has no vibration, so its innovations are all noise floor and read "too loose" whatever the settings. Optional inputs that never deliver (the VIO) are reported as not used. `age_s`, `rate_hz`, `stamp_lag_ms`: arrival of the input. The `slam_pose` NIS is reported but not judged (its variance is deliberately generous). |
-| `ekf_local`, `ekf_global` | 1 Hz | `std_*` (uncertainty), `predict_*`/`update_*` times, `loop_dt_max_ms` (WARN above 3 periods), `skipped_ticks`, `pose_gated`/`pose_reseeds` (global). |
+| `ekf_local/<sensor>` | 1 Hz | `nis_mean` against `nis_expected`: the filter's live calibration, the same statistic `ekf_tune.py` optimises. `nis_ratio` > 2 means over-confident (noise too small), < 0.1 far too loose; the status turns WARN. The NIS is only counted while the car is moving (above 0.3 m/s or 0.2 rad/s): a parked car has no vibration, so its innovations are all noise floor and read "too loose" whatever the settings. Optional inputs that never deliver (the VIO) are reported as not used. `age_s`, `rate_hz`, `stamp_lag_ms`: arrival of the input. |
+| `ekf_local` | 1 Hz | `std_*` (uncertainty), `predict_*`/`update_*` times, `loop_dt_max_ms` (WARN above 3 periods), `skipped_ticks`. |
 | `map_odom` | 2 Hz | `tx, ty, theta` the correction and `rate_*` its drift (the local odometry's drift per second); `innovation_m` how far the last SLAM pose was from the output (about 5 cm normally; WARN above 0.3 m); `updated/gated/jumped/skipped` pose outcomes; `pose_age_s` (WARN above 0.5 s, ERROR above 2 s). The pose covariance of `/state_estimation/odom_map` is the correction's alone (`std`, growing without a SLAM pose) plus the local heading variance: the local filter's position covariance grows without bound and says nothing about where the car is on the map. |
 | `mpc` (`/controller/diagnostics`, 10 Hz) | 10 Hz | `solve_ms_*` against `control_dt_ms`; `iterations_*`, `failures`; `slack_max` (track-limit violation in the plan, m); `prediction_error_*` (how far the car was from where the plan put it one period earlier: model mismatch or a command the car did not follow); `lateral_error`; `odom_age_max_ms`; `resets`, `jump_resets`. |
 

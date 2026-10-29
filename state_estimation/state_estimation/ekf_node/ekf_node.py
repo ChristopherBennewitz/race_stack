@@ -21,8 +21,7 @@ from . import defaults, diag_ros, models
 from .diagnostics import is_moving
 from .models import CommandDelay, SimulatorSingleTrackModel, VehicleModelParams
 from .prediction_history import PredictionHistory
-from .sensors import ImuSensor, OdomSensor, SlamPoseSensor
-from .slam_pose import SlamPoseUpdater
+from .sensors import ImuSensor, OdomSensor
 
 
 class EkfNode(Node):
@@ -34,21 +33,16 @@ class EkfNode(Node):
         - VESC: [x, y, psi, vx, vy, vpsi]
         - VIO: [x, y, psi, vx, vy, vpsi]
         - ACKERMANN: [accel, steer_angle]
-        - SLAM pose (global filter only): [x, y, psi] of base_link in the map frame
 
-    The node runs in one of two roles, chosen by the ``slam_pose_topic`` parameter:
-        - local (empty): knows nothing of SLAM. Its odometry lives in the ``odom`` frame, is smooth and drifts,
-          and is the motion prior the localization starts from. It broadcasts ``odom -> base_link``.
-        - global (a pose topic): the same model and inputs, plus the SLAM pose, in the ``map`` frame. SLAM
-          corrections reach it as measurements, so its estimate stays smooth where ``map -> odom`` jumps.
-          It publishes odometry only; the localization owns ``map -> odom``.
-    Keeping SLAM out of the local filter means the localization's prior is never made of its own output.
+    The filter knows nothing of SLAM: its odometry lives in the ``odom`` frame, is smooth and drifts, and is the
+    motion prior the localization starts from, so that prior is never made of the localization's own output. The
+    map-frame estimate for the controllers is this odometry moved by ``map_odom_node``.
 
     Sensors are configured in a single list in __init__ (see self.sensors); adding
     a new sensor is one line there.
     """
 
-    REQUIRED_SENSORS = ('imu', 'vesc', 'slam_pose')  # a silent one of these is a fault; the others are optional inputs
+    REQUIRED_SENSORS = ('imu', 'vesc')  # a silent one of these is a fault; the others are optional inputs
 
     def __init__(self):
         super().__init__('ekf_node')
@@ -61,8 +55,6 @@ class EkfNode(Node):
         self.declare_parameter('vio_topic', '/basalt/odom')
         self.declare_parameter('send_transform', False)
         self.declare_parameter('frame_id', 'odom')  # the frame the published odometry is in
-        # Role: empty is the local filter; a PoseStamped topic (base_link in map) makes this the global one.
-        self.declare_parameter('slam_pose_topic', '')
         self.declare_parameter('floor', rclpy.Parameter.Type.STRING)
         self.declare_parameter('R_imu', rclpy.Parameter.Type.DOUBLE_ARRAY)
         self.declare_parameter('R_vesc', rclpy.Parameter.Type.DOUBLE_ARRAY)
@@ -73,16 +65,8 @@ class EkfNode(Node):
         # live apart from the pbl_config car/tire config and from the shared R/Q above, which are sized for the
         # other models.
         self.declare_parameter('sim_cmd_topic', '/ackermann_cmd_applied')
-        noise = defaults.NOISE_GLOBAL if self.get_parameter('slam_pose_topic').value else defaults.NOISE
-        for name, default in {**defaults.MODEL, **noise}.items():
+        for name, default in {**defaults.MODEL, **defaults.NOISE}.items():
             self.declare_parameter('sim_' + name, default)
-        # Global filter only. The pose stamps lag the car by sim_slam_pose_delay (the scan match, TF lookup and
-        # republish), so a pose is compared with the estimate that far in the past. R is generous because the
-        # localization is fed the local filter's odometry, so its pose is not independent of this filter's inputs.
-        self.declare_parameter('sim_slam_pose_delay', defaults.SLAM['pose_delay'])
-        self.declare_parameter('sim_R_slam_pose', defaults.SLAM['R_slam_pose'])
-        self.declare_parameter('sim_slam_pose_gate', defaults.SLAM['pose_gate'])
-        self.declare_parameter('sim_slam_pose_reseed', defaults.SLAM['pose_reseed'])
 
         self.Hz = self.get_parameter('frequency').value
         self.racecar_version = os.environ.get('RACECAR_VERSION', 'NUC6')
@@ -96,10 +80,6 @@ class EkfNode(Node):
         
         self.send_transform = self.get_parameter('send_transform').value
         self.frame_id = self.get_parameter('frame_id').value
-        self.slam_pose_topic = self.get_parameter('slam_pose_topic').value
-        self.is_global = bool(self.slam_pose_topic)
-        if self.is_global and self.model_type != "simulator_single_track_model":
-            raise ValueError("the global filter needs model_type simulator_single_track_model")
 
         self.get_logger().info(f"[EKF Node] Racecar is: {self.racecar_version}")
 
@@ -110,10 +90,6 @@ class EkfNode(Node):
         self.uses_sim_model = self.model_type == "simulator_single_track_model"
         prefix = 'sim_' if self.uses_sim_model else ''
         self.R_imu = np.diag(self.get_parameter(prefix + 'R_imu').value)
-        if self.is_global:
-            # The IMU heading is zero-referenced at its first sample, which is not the map frame, and it drifts;
-            # the global filter takes its heading from SLAM and keeps only the IMU's rates and accelerations.
-            self.R_imu[0, 0] = 1e6
         self.R_vesc = np.diag(self.get_parameter(prefix + 'R_vesc').value)
         self.R_vio = np.diag(self.get_parameter('R_vio').value)
         q_values = list(self.get_parameter(prefix + 'Q').value)
@@ -200,9 +176,8 @@ class EkfNode(Node):
         # from the VESC AHRS and shares no reference with the odometry sources.
         self.prediction_history = PredictionHistory(self.get_parameter('sim_imu_accel_lag').value)
         if self.uses_sim_model:
-            # The global filter starts when SLAM provides its first pose, not on the IMU heading.
             imu = ImuSensor(self, self.IMU_TOPIC, self.R_imu, self._lagged_imu_measurement,
-                            self.model.HJacobian_imu, on_init=None if self.is_global else self.init_state_from_imu,
+                            self.model.HJacobian_imu, on_init=self.init_state_from_imu,
                             relative=True, alpha=1.0, accel_bias=self.get_parameter('sim_imu_accel_bias').value)
         else:
             imu = ImuSensor(self, self.IMU_TOPIC, self.R_imu, self.model.Hx_imu, self.model.HJacobian_imu,
@@ -216,13 +191,6 @@ class EkfNode(Node):
                        self.model.Hx_vesc, self.model.HJacobian_vesc,
                        relative=False),
         ]
-        if self.is_global:
-            self.slam_updater = SlamPoseUpdater(
-                self.model, np.diag(self.get_parameter('sim_R_slam_pose').value), self.prediction_history,
-                self.get_parameter('sim_slam_pose_delay').value, self.get_parameter('sim_slam_pose_gate').value,
-                self.get_parameter('sim_slam_pose_reseed').value)
-            self.sensors.append(SlamPoseSensor(self, self.slam_pose_topic, self.slam_updater,
-                                               on_init=self.init_state_from_slam))
 
         # Control input subscriptions
         if self.uses_sim_model:
@@ -289,12 +257,6 @@ class EkfNode(Node):
         self.get_logger().info(f"[EKF Node] Initial omega set to {imu_data[1]}")
         self.is_initialized = True
 
-    def init_state_from_slam(self, pose):
-        """Seed the global filter's pose from the first SLAM pose."""
-        self.slam_updater.seed(self.ekf, pose[:3])
-        self.get_logger().info(f"[EKF Node] Initial map pose set to {np.round(pose[:3], 3).tolist()}")
-        self.is_initialized = True
-
     # Callbacks
     def ackermann_callback(self, msg):
         if self.uses_sim_model:
@@ -335,13 +297,11 @@ class EkfNode(Node):
     def publish_diagnostics(self):
         """Per-sensor arrival and live NIS, and the filter's own timing and uncertainty, on /state_estimation/diagnostics."""
         now = self.get_clock().now().nanoseconds * 1e-9
-        role = 'global' if self.is_global else 'local'
         statuses = []
         for sensor in self.sensors:
             h = sensor.health
             values = {**h.values(now), 'update_mean_ms': sensor.update_mean_ms, 'update_max_ms': sensor.update_max_ms}
-            # The pose's NIS is not a calibration check (its variance is deliberately generous), so only the others are judged.
-            verdict = '' if sensor.name == 'slam_pose' else h.nis_verdict()
+            verdict = h.nis_verdict()
             if h.last_receive is None and sensor.name not in self.REQUIRED_SENSORS:
                 level, message = 'ok', f'{sensor.name}: not used (no messages)'
             elif h.age(now) > 0.5:
@@ -350,7 +310,7 @@ class EkfNode(Node):
                 level, message = 'warn', verdict
             else:
                 level, message = 'ok', f'{sensor.name}: NIS {h.nis_mean:.2f} (expected {h.dof}), counted while moving'
-            statuses.append(diag_ros.status(f'ekf_{role}/{sensor.name}', level, message, values))
+            statuses.append(diag_ros.status(f'ekf_local/{sensor.name}', level, message, values))
 
         with self.lock:
             P = np.array(self.ekf.P)
@@ -361,17 +321,14 @@ class EkfNode(Node):
         if self.uses_sim_model:
             for name, i in (('x', 0), ('y', 1), ('yaw', 2), ('vx', 3), ('vy', 4), ('yaw_rate', 5)):
                 values[f'std_{name}'] = float(np.sqrt(max(P[i, i], 0.0)))
-        if self.is_global:
-            updater = self.slam_updater
-            values.update(pose_gated=float(updater.rejected), pose_reseeds=float(updater.reseeds))
         period = 1.0 / self.Hz
         if not self.is_initialized:
-            level, message = 'error', 'not initialized (waiting for the first IMU or SLAM message)'
+            level, message = 'error', 'not initialized (waiting for the first IMU message)'
         elif self.loop_dt_max > 3 * period:
             level, message = 'warn', f'filter step took up to {1e3 * self.loop_dt_max:.0f} ms (period {1e3 * period:.0f} ms)'
         else:
             level, message = 'ok', 'running'
-        statuses.append(diag_ros.status(f'ekf_{role}', level, message, values))
+        statuses.append(diag_ros.status('ekf_local', level, message, values))
         self.loop_dt_max = 0.0
         self.diag_pub.publish(diag_ros.array(self.get_clock().now().to_msg(), statuses))
 

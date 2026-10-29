@@ -272,65 +272,16 @@ filter's own integration of $v_x$ along it. Only $v_x, v_y, \omega$ are used fro
 The pose comes from integrating velocity along the IMU-derived heading; Cartographer
 corrects it.
 
-**SLAM pose** (`/car_state/pose`, 3-dimensional; the **global filter only**, see Section 5b). The map-frame pose of `base_link`
-(the rear axle, $l_r$ behind the CoG) from TF:
+## 5b. Local filter and map-frame output
 
-$$
-\mathbf z_{\mathrm{slam}} = \begin{bmatrix}x_m & y_m & \psi_m\end{bmatrix}^\top,
-\qquad
-h_{\mathrm{slam}}(\mathbf x) = \begin{bmatrix}x - l_r\cos\psi & y - l_r\sin\psi & \psi\end{bmatrix}^\top,
-\quad R_{\mathrm{slam}} = \operatorname{diag}(0.3,\,0.3,\,0.15)
-$$
+`ekf_node` is the local filter: it knows nothing of SLAM. Its odometry is in the `odom` frame, drifts, and is the motion
+prior Cartographer starts from, so no estimate that contains SLAM is ever fed back into SLAM. It publishes
+`/state_estimation/odom` and the TF `odom -> base_link`.
 
-The Jacobian is again taken from the CasADi graph. The pose is older than its stamp by `sim_slam_pose_delay` = 10 ms (Section 5c), so
-$\mathbf z_{\mathrm{slam}}$ is compared with the pose the filter estimated at its stamp minus that delay
-(`PredictionHistory.pose_at`), not with the present one; the innovation is applied to the present state through the
-present Jacobian. `carstate_node` republishes the latest TF on a timer, so a stamp that has not advanced is ignored.
-A pose whose normalized innovation exceeds `sim_slam_pose_gate` (a $\chi^2_3$ threshold, 16) is dropped, which keeps
-scan-matching glitches out; after `sim_slam_pose_reseed` such poses in a row the state is re-seeded from the pose (a
-deliberate jump: the estimate, not the pose, is then the thing that is wrong). The first pose seeds the filter.
-
-**$R_{\mathrm{slam}}$ and the position process noise are not noise levels, they are a smoothness / tracking choice.**
-They cannot be fitted by maximum likelihood: scan-matching error is correlated in time, so the one-step-ahead
-likelihood always prefers a filter that follows the previous pose. `ekf_tune.py --global` does exactly that (it drives
-$R_{\mathrm{slam}}$ to its lower bound, triples the re-seeds and is no smoother; the gate is part of the likelihood so
-rejecting hard poses cannot help it either). The dynamics noise ($Q$ on $v_x, v_y, \psi, \omega$, steering, the IMU and
-VESC variances) is identified and agrees with the local filter's fit, so the global filter uses the local fit for it.
-The pose-related values come from `misc/ekf_global_sweep.py`, which lays the trade-off out on independent (scan-only)
-SLAM poses of the six takes: jitter (RMS acceleration implied by the filter's 100 Hz position; the local filter's is 16
-m/s$^2$), the size of the pose innovations, gated poses and re-seeds.
-
-| setting | jitter m/s$^2$ | from the pose | gated | re-seeds |
-|---|---|---|---|---|
-| earlier: $Q_x = Q_y \approx 4\cdot10^{-5}$, $R_{\mathrm{slam}}$ = 0.01 | 272 | 16 cm | 629 | 39 |
-| $Q_x = Q_y = 5\cdot10^{-3}$, $R$ x1 | 254 | 8.5 cm | 163 | 10 |
-| $Q_x = Q_y = 5\cdot10^{-2}$, $R$ x30 | 61 | 10 cm | 0 | 0 |
-| **default: $Q_x = Q_y = 0.5$, $R$ x30** | **89** | **5 cm** | **0** | **0** |
-| $Q_x = Q_y = 0.5$, $R$ x3 | 138 | 3 cm | 3 | 0 |
-
-The default follows the pose to about its own noise with no re-seeds, at about a third of the earlier jitter. The
-price is that the gate (a $\chi^2_3$ threshold on innovations normalized by the large $S$) now rejects only poses
-roughly 2 m away; smaller glitches are tempered by the large $R$ instead. The jitter is still several times the local
-filter's, because SLAM pose noise passes through the Kalman gain into the output; a structure that low-passes the
-correction (the local odometry plus a filtered `map -> odom`) would remove most of it. The sweep scales the three
-pose variances together and was run on the offline pose, which is noisier than the live one.
-
-## 5b. Two filters
-
-Both are this same node (`ekf_node`) and model; the `slam_pose_topic` parameter selects the role.
-
-| | local (`ekf_node`) | global (`ekf_global_node`) |
-|---|---|---|
-| frame | `odom`, drifts | `map`, anchored by SLAM |
-| inputs | IMU, VESC, commands | the same, plus the SLAM pose |
-| IMU heading | fused (zero-referenced at start) | not fused (`R` = 1e6): SLAM supplies the heading |
-| publishes | `/state_estimation/odom`, TF `odom -> base_link` | `/state_estimation/odom_map` (no TF) |
-| used for | Cartographer's odometry prior; anything wanting a locally exact, drifting estimate | controllers (MPC, RL) wanting a smooth map-frame state |
-
-The localization takes its prior from the local filter only, so no estimate that contains SLAM is ever fed back into
-SLAM. SLAM corrections still reach the controllers, through the global filter as measurements: where
-`map -> odom` steps by a few centimetres when Cartographer optimises, the global estimate absorbs the step over several
-ticks with the Kalman gain instead of passing it through.
+The controllers' map-frame estimate, `/state_estimation/odom_map`, is not a second filter: `map_odom_node` moves the local
+odometry by a slowly corrected `map -> odom` (Section 5d). An earlier version fused the SLAM pose into a second instance of
+this node (the "global filter"); it was removed because the correction is much smoother at the same distance from the pose
+(Section 5d).
 
 ## 5c. Latencies
 
@@ -342,35 +293,30 @@ header stamp, two sysid takes):
 |---|---|---|
 | IMU, VESC odometry | median 0.2 / 0.4 ms, p95 about 2 ms | applied on arrival. The drivers stamp on receipt, so the stamp holds no information about the true sensor latency; what is unmodelled is absorbed into R and the accelerometer lag |
 | applied commands | 0.3 ms | the steering command is delayed by `steer_delay` (`CommandDelay`), then followed through the lag; the speed command is delayed by `speed_delay` before the speed loop |
-| SLAM pose | median 7 ms, p95 14 ms, 1 % repeats | the **stamp** (not the arrival) places it in time; repeated stamps are ignored |
+| SLAM pose (`map_odom_node`) | median 7 ms, p95 14 ms, 1 % repeats | the **stamp** (not the arrival) places it in time; repeated stamps are ignored |
 
 The accelerometer's 50 ms is a *lag* (a low-pass the prediction is passed through), not a transport delay.
 
 **SLAM pose.** `carstate_node` publishes `map -> odom` (Cartographer) composed with `odom -> base_link` (the local
 filter), looked up at the latest common time; that time is the pose's stamp. The pose is then older than its stamp
-by `sim_slam_pose_delay`: the odometry part is exact at the stamp, while the scan-matched correction inside it is as old
-as the scan match. So a pose is compared with the pose the global filter estimated at `stamp - delay`
-(`PredictionHistory.pose_at`), and the innovation is applied to the present state; this assumes the estimation error
-changed little over the delay. When the state is re-seeded from a pose (the first pose, or after a streak of gated
-ones) the stored history is moved rigidly with it (`PredictionHistory.rebase`); otherwise the poses that follow
-would be compared with a trajectory from before the jump.
+by `pose_delay` (`defaults.POSE_DELAY`): the odometry part is exact at the stamp, while the scan-matched correction inside it is as old
+as the scan match. So `MapOdomCorrection` compares a pose with the local pose at `stamp - delay`
+(`PredictionHistory.pose_at`).
 
-The delay is measured, not assumed: `misc/ekf_replay.py --global --estimate-delay` replays a grid of delays and reports
-the one with the most likely pose innovations. The sysid bags' pose was computed from the local filter's own odometry, so
-there the answer is biased towards zero; run it on a pose from Cartographer re-run offline (`--pose-dir`) before
-trusting the number. On the six takes with such poses and the car model of 2026-10-24 the optimum is 10 ms (flat from 0 to
-20 ms; 0.007 NLL per sample between 10 and 20, clearly worse from 45 ms); with the earlier car parameters it was 20 ms, so it moves
-with the actuator delays of the model.
+The delay was measured on a pose from Cartographer re-run offline (`misc/offline_slam_poses.py`; the sysid bags' own pose was
+computed from the local filter's odometry, which biases the answer towards zero). On the six takes with the car model of
+2026-10-24 the optimum was 10 ms (flat from 0 to 20 ms; clearly worse from 45 ms); with the earlier car parameters it was
+20 ms, so it moves with the actuator delays of the model. That measurement used the global filter's pose innovations, which
+were removed with it; to repeat it, sweep `pose_delay` in `misc/ekf_correction_sweep.py`.
 
-Not compensated: the age of the estimate when a controller uses it. The global filter publishes the state at
-its tick time, so a consumer sees it a few milliseconds later (DDS, executor); the MPC checks the age against
-`max_odom_age_s` but does not predict forward by it.
+Not compensated: the age of the estimate when a controller uses it. A consumer sees the odometry a few milliseconds after its
+tick (DDS, executor); the MPC checks the age against `max_odom_age_s` but does not predict forward by it.
 
-## 5d. The smooth alternative: local odometry plus a corrected map -> odom
+## 5d. Local odometry plus a corrected map -> odom
 
-The global filter's output is smooth only as far as its position gain allows: every pose moves the position by
-gain * innovation (about 3.6 mm per tick for the adopted settings), which is the 88 m/s^2 "jitter" in the table of
-section 5. `MapOdomCorrection` takes the other route. The output is the *local* filter's pose moved by a rigid 2-D
+Fusing the pose into a filter (the removed global EKF) is smooth only as far as its position gain allows: every pose moves
+the position by gain * innovation (about 3.6 mm per tick for the settings it had), which was an 88 m/s^2 "jitter" (row below).
+`MapOdomCorrection` takes the other route. The output is the *local* filter's pose moved by a rigid 2-D
 transform `T` (`map <- odom`), so everything fast is the local filter's own, and `T` follows the SLAM poses slowly.
 
 - **Measurement of `T`:** a pose `P` stamped `s` (content from `s - pose_delay`) gives `T_obs = P * L(s - pose_delay)^-1`, where `L` is the
@@ -393,11 +339,11 @@ Measured (`misc/ekf_correction_sweep.py`, six takes, independent scan-only poses
 | | position jitter | yaw jitter | from the pose | vx / wz error |
 |---|---|---|---|---|
 | local filter (no SLAM) | 16 | 17 | - | 0.215 / 0.149 |
-| global EKF (section 5) | 88 | 12 | 5.2 cm | 0.216 / 0.136 |
+| removed global EKF, for reference | 88 | 12 | 5.2 cm | 0.216 / 0.136 |
 | correction, `tau` 0.15, `smooth` 0.05 | 32 | 19 | 4.7 cm | 0.215 / 0.149 |
 | correction, `tau` 0.15, `smooth` 0 | 103 | 33 | 3.7 cm | same |
 
-What it gives up: the velocities and yaw rate no longer benefit from the pose (wz 0.149 against the EKF's 0.136), and the
+What it gives up: the velocities and yaw rate no longer benefit from the pose (wz 0.149 against the removed EKF's 0.136), and the
 heading is the local heading plus a smoothed offset, so yaw jitter is about the local filter's. What it gains: nothing from
 SLAM can disturb the velocities; it runs without the model, the Jacobians or the history of the EKF, and with either local
 filter. Checked on the recorded live pose together with the live local odometry it was built from (the consistent pair):

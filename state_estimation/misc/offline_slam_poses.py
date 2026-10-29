@@ -2,14 +2,14 @@
 """Re-runs Cartographer offline on a bag's lidar scans, for a SLAM pose that does not depend on the live estimator.
 
 The pose in a recorded take (`/car_state/pose`) was computed from the live estimator's odometry, so it is not
-independent evidence for the global filter: its innovations look too good, and the pose delay and noise fitted to it
+independent evidence for the map-frame correction: it looks too good, and the pose delay and gains tuned on it
 are biased. Here Cartographer sees only `/scan` and the static lidar mounting (`/tf_static`), with **no odometry and
 no IMU**, so its pose comes from scan matching alone. The poses go to `<out-dir>/<bag name>.csv` (`t x y yaw`, the
-`/tracked_pose` stamps, i.e. scan time) which `ekf_replay.py --global --pose-dir` reads.
+`/tracked_pose` stamps, i.e. scan time) which `ekf_correction_sweep.py --pose-dir` and `ekf_replay.py --reference-dir` read.
 
 What this is and is not:
 - Mapping mode (the default) builds a map from the take itself, so the poses are in that map's frame, which starts at
-  the first pose. The global filter only needs the poses to be consistent with each other. Give `--map` a `.pbstream`
+  the first pose. The correction only needs the poses to be consistent with each other. Give `--map` a `.pbstream`
   of the track to localize in it instead, as the car does (frame then matches the live `map`).
 - The pose is the online `/tracked_pose` (what a live system would have had at that moment), not the final optimized
   trajectory, so loop-closure jumps are in it.
@@ -21,8 +21,8 @@ Run it where ROS 2 Humble and `cartographer_ros` are sourced (the race_stack con
 and FastDDS so it does not touch a running stack (the container's default is zenoh, which needs a router):
 
     python3 state_estimation/misc/offline_slam_poses.py sysid_bags/sysid_* --out-dir sysid_poses
-    f1tenth_parallel_sim/.venv/bin/python state_estimation/misc/ekf_replay.py sysid_bags/sysid_<take> \\
-        --global --pose-dir sysid_poses --estimate-delay
+    f1tenth_parallel_sim/.venv/bin/python state_estimation/misc/ekf_correction_sweep.py sysid_bags/sysid_* \\
+        --pose-dir sysid_poses
 
 ``--dry-run`` prints the commands and the derived Cartographer configuration without starting anything.
 """

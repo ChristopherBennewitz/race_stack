@@ -3,7 +3,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
@@ -41,41 +41,10 @@ def generate_launch_description():
                         }],
                     )
 
-    # The global filter: the same model and inputs plus the SLAM pose, in the map frame. It publishes odometry only
-    # (Cartographer owns map->odom), and nothing feeds Cartographer from it, so the localization's prior stays the
-    # local filter's SLAM-free odometry. Needs the simulator model, which is the only one with a pose measurement.
-    global_ekf_node = Node(
-                        condition=IfCondition(PythonExpression([
-                            "'", custom_ekf, "'.lower() == 'true' and '", LaunchConfiguration('global_ekf'),
-                            "'.lower() == 'true' and '", LaunchConfiguration('global_type'),
-                            "' == 'ekf' and '", LaunchConfiguration('model_type'),
-                            "' == 'simulator_single_track_model'"])),
-                        package='state_estimation',
-                        executable='ekf_node',
-                        name='ekf_global_node',
-                        output='screen',
-                        emulate_tty=True,
-                        parameters=[{
-                            'frequency': 100,
-                            'racecar_version': LaunchConfiguration('racecar_version'),
-                            'model_type': LaunchConfiguration('model_type'),
-                            'odom_topic': LaunchConfiguration('global_odom_topic'),
-                            'imu_topic': LaunchConfiguration('imu_topic'),
-                            'vesc_topic': LaunchConfiguration('odom_vesc_topic'),
-                            'floor': LaunchConfiguration('floor'),
-                            'frame_id': 'map',
-                            'slam_pose_topic': LaunchConfiguration('slam_pose_topic'),
-                            'send_transform': False,
-                        }],
-                    )
-
-    # The default global estimate: the local filter's odometry moved into the map frame by a slowly corrected
-    # map -> odom (smoother than the global filter at the same distance from the SLAM pose). Works with either local
-    # filter, as it only needs the local odometry and the pose.
+    # The controllers' map-frame estimate: the local filter's odometry moved into the map frame by a slowly corrected
+    # map -> odom. Works with either local filter, as it only needs the local odometry and the pose.
     map_odom_node = Node(
-                        condition=IfCondition(PythonExpression([
-                            "'", LaunchConfiguration('global_ekf'), "'.lower() == 'true' and '",
-                            LaunchConfiguration('global_type'), "' == 'correction'"])),
+                        condition=IfCondition(LaunchConfiguration('global_ekf')),
                         package='state_estimation',
                         executable='map_odom_node',
                         name='map_odom_node',
@@ -108,11 +77,9 @@ def generate_launch_description():
         DeclareLaunchArgument('imu_topic', default_value='/imu'),
         DeclareLaunchArgument('odom_topic', default_value='/state_estimation/odom'),
         DeclareLaunchArgument('global_ekf', default_value='true'),
-        DeclareLaunchArgument('global_type', default_value='correction'),  # or 'ekf': the global filter
         DeclareLaunchArgument('global_odom_topic', default_value='/state_estimation/odom_map'),
         DeclareLaunchArgument('slam_pose_topic', default_value='/car_state/pose'),
         custom_ekf_node,
-        global_ekf_node,
         map_odom_node,
         robot_localization_ekf_node,
     ])

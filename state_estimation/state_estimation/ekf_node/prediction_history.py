@@ -9,7 +9,7 @@ class PredictionHistory:
     """Recent base_link poses, and the estimated IMU accelerations passed through the accelerometer's lag.
 
     Two measurements refer to an earlier time than the filter's present. A SLAM pose is stamped when the scan
-    was matched, so it is compared with the pose the filter estimated then. The accelerometer reports the
+    was matched, so ``MapOdomCorrection`` compares it with the pose the filter estimated then. The accelerometer reports the
     acceleration through a first-order lag (the sensor's own low-pass), so it is compared with the estimated
     acceleration passed through the same lag. The innovation is applied to the present state through the
     present Jacobian, which assumes the estimation error changed little over the delay.
@@ -41,22 +41,6 @@ class PredictionHistory:
         while len(self._t) > 2 and self._t[1] < t - self.horizon:
             self._t.popleft()
             self._pose.popleft()
-
-    def rebase(self, old, new):
-        """Moves the stored poses rigidly so that ``old`` (the pose just estimated) becomes ``new``.
-
-        After the filter's pose is re-seeded, the history of where it believed the car was must follow, or the next
-        poses are compared with a trajectory from before the jump.
-        """
-        if not self._pose:
-            return
-        c_old, s_old = math.cos(old[2]), math.sin(old[2])
-        c_new, s_new = math.cos(new[2]), math.sin(new[2])
-        for k, p in enumerate(self._pose):
-            dx, dy = p[0] - old[0], p[1] - old[1]
-            rx, ry = c_old * dx + s_old * dy, -s_old * dx + c_old * dy  # in the old pose's frame
-            yaw = new[2] + (p[2] - old[2] + math.pi) % (2.0 * math.pi) - math.pi
-            self._pose[k] = np.array([new[0] + c_new * rx - s_new * ry, new[1] + s_new * rx + c_new * ry, yaw])
 
     def pose_at(self, t):
         """The estimated ``[x, y, yaw]`` at time ``t``, or None if the history does not reach back to ``t``.

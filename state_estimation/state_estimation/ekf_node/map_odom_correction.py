@@ -33,7 +33,7 @@ class MapOdomCorrection:
 
     Args:
         tau:            time constant of the correction, seconds (larger = smoother, slower to follow drift)
-        pose_delay:     how much older than its stamp a pose's content is, seconds (see ``SlamPoseUpdater``)
+        pose_delay:     how much older than its stamp a pose's content is, seconds
         gate_distance:  a pose farther than this from the output (metres) is rejected
         gate_angle:     a pose whose heading differs from the output by more than this (radians) is rejected
         reseed_after:   consecutive rejected poses before the correction is set from the pose

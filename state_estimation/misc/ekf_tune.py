@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
-"""Fits an EKF's noise (Q, the IMU, VESC and, for the global filter, SLAM-pose R) to recorded bags by maximum likelihood.
+"""Fits the local EKF's noise (Q, the IMU and VESC R) to recorded bags by maximum likelihood.
 
 The filter's one-step-ahead prediction errors (innovations) are Gaussian with covariance S when the noise is
 right, so the right noise minimizes the summed negative log-likelihood ``0.5 (y' S^-1 y + log det S)`` over every
 sensor update. That needs no ground truth. CMA-ES searches the log10 of the diagonal noise within ``--decades`` of
 the node's defaults.
-
-Two filters: the *local* one (default; IMU and VESC only, it gives the localization its odometry prior) and, with
-``--global``, the *global* one, which adds the SLAM pose and feeds the controllers. The global fit needs a SLAM pose
-per bag (``--pose-dir``; ``offline_slam_poses.py`` makes ones that do not depend on the live estimator) and fits the
-pose variances too. The pose delay, gate and re-seed streak are held at ``--pose-delay`` / the node's defaults.
 
 Speed: a candidate is scored on a bag by ``ekf_fast`` (the whole replay as one compiled CasADi call, ~0.1 s per bag)
 in a pool of worker processes, one task per (candidate, bag). ``ekf_replay.replay`` is the reference implementation:
@@ -26,8 +21,6 @@ reference that gets *worse*. ``--fix NAME[=VARIANCE]`` holds a parameter (at its
 
     f1tenth_parallel_sim/.venv/bin/python misc/ekf_tune.py sysid_bags/sysid_* --holdout figure_8 free_drive_3 \\
         --fix 'R_vesc[vx]' 'R_imu[yaw]' 'R_imu[yaw_rate]' --out local.json
-    f1tenth_parallel_sim/.venv/bin/python misc/ekf_tune.py sysid_bags/sysid_* --holdout figure_8 free_drive_3 \\
-        --global --pose-dir sysid_poses --fix 'R_vesc[vx]' 'R_imu[yaw_rate]' --out global.json
 
 Bags are parsed once and cached (``--cache-dir``). Prints the tuned ``defaults`` values to paste.
 """
@@ -45,8 +38,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ekf_replay import (Engine, FilterConfig, SlamConfig, load_pose_file, read_bag, reference_velocity, replay,  # noqa: E402
-                        summarize, summarize_slam)
+from ekf_replay import Engine, FilterConfig, read_bag, reference_velocity, replay, summarize  # noqa: E402
 from state_estimation.ekf_node import defaults  # noqa: E402
 
 BAD = 1e9  # the cost of a candidate whose filter diverged
@@ -56,12 +48,6 @@ PARAMETERS = (
     + ['R_vesc[vx]', 'R_vesc[yaw_rate]']
 )
 N_VARIANCES = len(PARAMETERS)
-# The global filter does not fuse the IMU heading (R = 1e6), so R_imu[yaw] is not a parameter there; it adds the pose.
-GLOBAL_PARAMETERS = (
-    [f'Q[{n}]' for n in ('x', 'y', 'yaw', 'vx', 'vy', 'yaw_rate', 'steer')]
-    + [f'R_imu[{n}]' for n in ('yaw_rate', 'ax', 'ay')]
-    + ['R_vesc[vx]', 'R_vesc[yaw_rate]', 'R_slam[xy]', 'R_slam[yaw]']
-)
 BIAS_SCALE = 0.5  # m/s^2: one CMA-ES unit of accelerometer bias
 
 
@@ -69,12 +55,6 @@ def nominal_vector():
     """log10 of the local filter's defaults, in ``PARAMETERS`` order."""
     n = defaults.NOISE
     return np.log10(np.array(list(n['Q']) + list(n['R_imu']) + [n['R_vesc'][3], n['R_vesc'][5]]))
-
-
-def nominal_vector_global():
-    """log10 of the global filter's defaults, in ``GLOBAL_PARAMETERS`` order."""
-    n, s = defaults.NOISE_GLOBAL, defaults.SLAM['R_slam_pose']
-    return np.log10(np.array(list(n['Q']) + list(n['R_imu'][1:]) + [n['R_vesc'][3], n['R_vesc'][5], s[0], s[2]]))
 
 
 def to_config(theta, fit_bias):
@@ -89,19 +69,6 @@ def to_config(theta, fit_bias):
     if fit_bias:
         config.accel_bias = np.array(defaults.NOISE['imu_accel_bias']) + BIAS_SCALE * np.asarray(theta[N_VARIANCES:N_VARIANCES + 2])
     return config
-
-
-def to_global_config(theta, delay):
-    """The global filter's ``(FilterConfig, SlamConfig)`` for a parameter vector (log10 variances)."""
-    v = 10.0 ** np.asarray(theta[:len(GLOBAL_PARAMETERS)])
-    config = FilterConfig.for_global()
-    config.Q = np.diag(v[:7])
-    config.R_imu = np.diag([config.R_imu[0, 0], v[7], v[8], v[9]])
-    r_vesc = np.array(defaults.NOISE_GLOBAL['R_vesc'], dtype=float)
-    r_vesc[3], r_vesc[5] = v[10], v[11]
-    config.R_vesc = np.diag(r_vesc)
-    slam = SlamConfig(R=np.diag([v[12], v[12], v[13]]), delay=delay)
-    return config, slam
 
 
 def parse_constraints(fix, floor, names=PARAMETERS, nominal=None):
@@ -143,10 +110,6 @@ def load_bag(path, cache_dir):
     return bag
 
 
-def pose_for(bag_path, pose_dir):
-    return load_pose_file(Path(pose_dir) / (Path(bag_path).name + '.csv'))
-
-
 # --- worker processes: each prepares the training bags once and compiles its own filter ---------------------------
 _replays: list = []
 _spec: dict = {}
@@ -158,26 +121,15 @@ def _init_worker(paths, spec):
     global _replays, _spec
     _spec = spec
     engine = Engine()
-    if spec['global']:
-        fast = ekf_fast.FastGlobalFilter(engine)
-        config, slam = FilterConfig.for_global(), SlamConfig(delay=spec['delay'])
-        _replays = [ekf_fast.FastGlobalReplay(load_bag(p, spec['cache_dir']), config,
-                                              SlamConfig(delay=spec['delay'], pose=pose_for(p, spec['pose_dir'])), engine, fast)
-                    for p in paths]
-    else:
-        fast = ekf_fast.FastFilter(engine)
-        _replays = [ekf_fast.FastReplay(load_bag(p, spec['cache_dir']), FilterConfig(), engine, fast) for p in paths]
+    fast = ekf_fast.FastFilter(engine)
+    _replays = [ekf_fast.FastReplay(load_bag(p, spec['cache_dir']), FilterConfig(), engine, fast) for p in paths]
 
 
 def _score(task):
     """(summed NLL, samples) of one candidate on one training bag."""
     index, theta = task
     try:
-        if _spec['global']:
-            config, slam = to_global_config(theta, _spec['delay'])
-            result = _replays[index].run(config, slam)
-        else:
-            result = _replays[index].run(to_config(theta, _spec['fit_bias']))
+        result = _replays[index].run(to_config(theta, _spec['fit_bias']))
     except RuntimeError:
         return BAD, 1
     nll = sum(result['nll'].values())
@@ -189,49 +141,29 @@ def check_fast_path(path, spec, engine):
     import ekf_fast
 
     bag = load_bag(path, spec['cache_dir'])
-    if spec['global']:
-        theta = nominal_vector_global() + 0.3
-        config, slam = to_global_config(theta, spec['delay'])
-        slam.pose = pose_for(path, spec['pose_dir'])
-        result = ekf_fast.FastGlobalReplay(bag, config, slam, engine, ekf_fast.FastGlobalFilter(engine)).run(config, slam)
-        _, stats = replay(bag, config, engine, slam)
-        reference = {**stats['nll'], 'pose': stats['slam']['nll_clipped']}
-        nis = {**{k: float(np.sum(v)) for k, v in stats['nis'].items()}, 'pose': float(np.sum(stats['slam']['nis']))}
-        counts = {**stats['count'], 'pose': stats['slam']['count_all']}
-    else:
-        config = to_config(nominal_vector() + 0.3, False)
-        result = ekf_fast.FastReplay(bag, config, engine, ekf_fast.FastFilter(engine)).run(config)
-        _, stats = replay(bag, config, engine)
-        reference, nis, counts = stats['nll'], {k: float(np.sum(v)) for k, v in stats['nis'].items()}, stats['count']
+    config = to_config(nominal_vector() + 0.3, False)
+    result = ekf_fast.FastReplay(bag, config, engine, ekf_fast.FastFilter(engine)).run(config)
+    _, stats = replay(bag, config, engine)
+    reference, nis, counts = stats['nll'], {k: float(np.sum(v)) for k, v in stats['nis'].items()}, stats['count']
     for sensor in reference:
         for name, a, b in (('NLL', result['nll'][sensor], reference[sensor]), ('NIS', result['nis_sum'][sensor], nis[sensor])):
-            if abs(a - b) > 1e-4 * abs(b):  # the gated, re-seeding global filter amplifies float differences a little
+            if abs(a - b) > 1e-4 * abs(b):
                 raise SystemExit(f'the fast evaluator disagrees with ekf_replay on the {name} of {Path(path).name} '
                                  f'({sensor}: {a} vs {b})')
         if result['count'][sensor] != counts[sensor]:
             raise SystemExit(f'the fast evaluator counts {result["count"][sensor]} {sensor} updates, ekf_replay {counts[sensor]}')
 
 
-def evaluate(paths, config, cache_dir, engine, label, slam=None, pose_dir=None):
-    """Prints the report for ``config`` (and the SLAM fusion ``slam``) on ``paths``; returns pooled (NLL/sample, rmse)."""
+def evaluate(paths, config, cache_dir, engine, label):
+    """Prints the report for ``config`` on ``paths``; returns pooled (NLL/sample, rmse)."""
     errors, nll, count = [], 0.0, 0
     for path in paths:
         bag = load_bag(path, cache_dir)
-        this_slam = None
-        if slam is not None:
-            this_slam = SlamConfig(R=slam.R, delay=slam.delay, gate=slam.gate, reseed_after=slam.reseed_after,
-                                   pose=pose_for(path, pose_dir))
-        rows, stats = replay(bag, config, engine, this_slam)
-        name = f'{label} {Path(path).name.replace("sysid_", "")}'
-        summarize(name, rows, stats)
-        if this_slam is not None:
-            summarize_slam(name, rows, stats, this_slam.pose)
+        rows, stats = replay(bag, config, engine)
+        summarize(f'{label} {Path(path).name.replace("sysid_", "")}', rows, stats)
         errors.append(rows[:, 1:4] - rows[:, 4:7])
         nll += sum(stats['nll'].values())
         count += sum(stats['count'].values())
-        if this_slam is not None:
-            nll += stats['slam']['nll_clipped']
-            count += stats['slam']['count_all']
     rmse = np.sqrt((np.vstack(errors) ** 2).mean(0))
     print(f'{label} POOLED  NLL/sample {nll / count:.3f}  rmse vx {rmse[0]:.3f} vy {rmse[1]:.3f} wz {rmse[2]:.3f}')
     return nll / count, rmse
@@ -279,9 +211,6 @@ def search(pool, n_train, free, template, lo, hi, args, seed):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('bags', nargs='+', help='bag directories')
-    ap.add_argument('--global', dest='global_filter', action='store_true', help='fit the global filter (needs --pose-dir)')
-    ap.add_argument('--pose-dir', help='global: <dir>/<bag name>.csv of t x y yaw per bag (offline_slam_poses.py)')
-    ap.add_argument('--pose-delay', type=float, default=defaults.SLAM['pose_delay'], help='global: how old a pose is (s)')
     ap.add_argument('--holdout', nargs='*', default=[], metavar='SUBSTRING',
                     help='bags whose path contains one of these are kept out of the fit and used to check it')
     ap.add_argument('--fix', nargs='*', metavar='NAME[=VARIANCE]', help='hold these parameters (default value unless given)')
@@ -291,7 +220,7 @@ def main():
     ap.add_argument('--popsize', type=int, default=32)
     ap.add_argument('--max-generations', type=int, default=300)
     ap.add_argument('--restarts', type=int, default=3, help='independent searches from different seeds; the best wins')
-    ap.add_argument('--fit-bias', action='store_true', help='local: also fit the accelerometer bias')
+    ap.add_argument('--fit-bias', action='store_true', help='also fit the accelerometer bias')
     ap.add_argument('--workers', type=int, default=max(1, (os.cpu_count() or 2) // 2),
                     help='worker processes; the default is the number of physical cores assuming 2 threads per core '
                     '(more workers slow every task down once the cores are shared)')
@@ -306,35 +235,26 @@ def main():
     args.bags = [b for b in args.bags if Path(b).is_dir()]  # a shell glob also matches the .metadata.yaml files
     if not args.bags:
         ap.error('no bag directories given')
-    if args.global_filter and not args.pose_dir:
-        ap.error('--global needs --pose-dir')
-    if args.global_filter and args.fit_bias:
-        ap.error('--fit-bias is for the local filter')
 
-    is_global = args.global_filter
-    names = GLOBAL_PARAMETERS if is_global else PARAMETERS
-    base = nominal_vector_global() if is_global else nominal_vector()
+    names = PARAMETERS
+    base = nominal_vector()
     held = [b for b in args.bags if any(s in b for s in args.holdout)]
     train = [b for b in args.bags if b not in held]
     if not train:
         ap.error('no training bags left after --holdout')
     fixed, floors = parse_constraints(args.fix, args.floor, names, base)
-    print(f'{"global" if is_global else "local"} filter: training on {len(train)} bags, holding out {len(held)}')
+    print(f'training on {len(train)} bags, holding out {len(held)}')
     for b in args.bags:  # parse once here so the workers only read the cache
         load_bag(b, args.cache_dir)
-    spec = {'global': is_global, 'cache_dir': args.cache_dir, 'pose_dir': args.pose_dir, 'delay': args.pose_delay,
-            'fit_bias': args.fit_bias}
+    spec = {'cache_dir': args.cache_dir, 'fit_bias': args.fit_bias}
 
     engine = Engine()
     n_params = len(names) + (2 if args.fit_bias else 0)
-    if is_global:
-        nominal_config, nominal_slam = to_global_config(base, args.pose_delay)
-    else:
-        nominal_config, nominal_slam = to_config(np.concatenate([base, np.zeros(2)]), args.fit_bias), None
+    nominal_config = to_config(np.concatenate([base, np.zeros(2)]), args.fit_bias)
     print('\n== defaults ==')
-    evaluate(train, nominal_config, args.cache_dir, engine, 'train', nominal_slam, args.pose_dir)
+    evaluate(train, nominal_config, args.cache_dir, engine, 'train')
     if held:
-        evaluate(held, nominal_config, args.cache_dir, engine, 'hold ', nominal_slam, args.pose_dir)
+        evaluate(held, nominal_config, args.cache_dir, engine, 'hold ')
     if args.evaluate_only:
         return
     check_fast_path(train[0], spec, engine)
@@ -365,14 +285,11 @@ def main():
     finally:
         pool.terminate()
 
-    if is_global:
-        tuned, tuned_slam = to_global_config(best, args.pose_delay)
-    else:
-        tuned, tuned_slam = to_config(best, args.fit_bias), None
+    tuned = to_config(best, args.fit_bias)
     print('\n== tuned ==')
-    evaluate(train, tuned, args.cache_dir, engine, 'train', tuned_slam, args.pose_dir)
+    evaluate(train, tuned, args.cache_dir, engine, 'train')
     if held:
-        evaluate(held, tuned, args.cache_dir, engine, 'hold ', tuned_slam, args.pose_dir)
+        evaluate(held, tuned, args.cache_dir, engine, 'hold ')
 
     print('\nparameter           default        tuned   factor')
     for i, (name, d, t) in enumerate(zip(names, base, best[:len(names)])):
@@ -387,15 +304,11 @@ def main():
         'Q': [float(v) for v in np.diag(tuned.Q)],
         'imu_accel_bias': [float(v) for v in tuned.accel_bias],
     }
-    if is_global:
-        noise['R_imu'][0] = defaults.NOISE_GLOBAL['R_imu'][0]  # the global filter does not fuse the IMU heading
-        noise['R_slam_pose'] = [float(v) for v in np.diag(tuned_slam.R)]
-    print(f'\nstate_estimation/ekf_node/defaults.py {"NOISE_GLOBAL" if is_global else "NOISE"} entries:')
+    print('\nstate_estimation/ekf_node/defaults.py NOISE entries:')
     for key, value in noise.items():
         print(f"    '{key}': [{', '.join(f'{v:.4g}' for v in value)}],")
     if args.out:
-        Path(args.out).write_text(json.dumps({'noise': noise, 'train': train, 'holdout': held, 'global': is_global,
-                                              'pose_delay': args.pose_delay if is_global else None,
+        Path(args.out).write_text(json.dumps({'noise': noise, 'train': train, 'holdout': held,
                                               'fixed': {names[i]: float(10 ** v) for i, v in fixed.items()},
                                               'nll_per_sample': best_cost}, indent=2))
         print(f'wrote {args.out}')

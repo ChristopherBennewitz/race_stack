@@ -10,7 +10,6 @@ import time
 
 import numpy as np
 import tf_transformations as tft
-from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 
@@ -246,51 +245,3 @@ class OdomSensor(Sensor):
              msg.pose.pose.orientation.w]
         __, __, yaw = tft.euler_from_quaternion(q)
         self.data[2] = yaw
-
-
-class SlamPoseSensor(Sensor):
-    """
-    Map-frame pose of base_link from the SLAM localization (``/car_state/pose``), for the global filter.
-
-    Measurement: [x, y, yaw, stamp]. The fusion itself (delay compensation, gating, re-seeding) is in
-    ``SlamPoseUpdater``; this class owns the subscription. ``carstate_node`` republishes the latest TF on a
-    timer, so a message whose stamp has not advanced carries no new scan match and is ignored.
-
-    The first pose seeds the filter: the global filter has no pose of its own until SLAM provides one.
-    """
-
-    def __init__(self, node, topic, updater, on_init):
-        super().__init__(node, 'slam_pose', PoseStamped, topic, 4, updater.R, None, None, on_init=on_init)
-        self.updater = updater
-        self.outcomes = {}
-        self._last_stamp = None
-
-    def _callback(self, msg):
-        self.note_arrival(msg)
-        q = msg.pose.orientation
-        __, __, yaw = tft.euler_from_quaternion([q.x, q.y, q.z, q.w])
-        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        with self.node.lock:
-            if self._last_stamp is not None and stamp <= self._last_stamp:
-                return
-            self._last_stamp = stamp
-            self.data[:] = (msg.pose.position.x, msg.pose.position.y, normalize_angle(yaw), stamp)
-            if not self._seeded and self.on_init is not None:
-                self.on_init(self.data)
-                self._seeded = True
-            self.fresh = True
-
-    def update(self, ekf, z, u):
-        t0 = time.perf_counter_ns()
-        outcome = self.updater.update(ekf, z[:3], z[3])
-        self.outcomes[outcome] = self.outcomes.get(outcome, 0) + 1
-        if outcome in ('updated', 'gated') and self.updater.last_innovation is not None:
-            y, S = self.updater.last_innovation  # not a calibration check: the pose variance is deliberately generous
-            self.health.record(float(y @ np.linalg.solve(S, y)))
-        if outcome == 'reseeded':
-            self.node.get_logger().warn("[EKF Node] SLAM pose disagreed with the estimate repeatedly; re-seeded from it")
-        duration_ms = (time.perf_counter_ns() - t0) / 1_000_000.0
-        if duration_ms > self.update_max_ms:
-            self.update_max_ms = duration_ms
-        self.update_count += 1
-        self.update_mean_ms += (duration_ms - self.update_mean_ms) / self.update_count

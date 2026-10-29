@@ -51,40 +51,19 @@ NOISE = {
     'predict_substep': 0.005,
 }
 
-# The GLOBAL filter (the one that adds the SLAM pose and feeds the controllers). Its dynamics noise is the local fit
-# (the two fits agree: ekf_tune.py --global gave Q[vy], Q[yaw_rate], Q[steer], R_imu[ax], R_imu[ay] and R_vesc[yaw_rate]
-# within 15 % of the local ones). The position process noise and the pose variances are NOT noise levels the data can
-# identify: scan-matching error is correlated in time, so the one-step-ahead likelihood always prefers a filter that
-# follows the previous pose (R_slam to its lower bound, 3x the re-seeds, no smoother). They are a smoothness / tracking
-# trade-off, chosen with misc/ekf_global_sweep.py on the six takes and independent (scan-only) SLAM poses:
-#     old values (Q[x] = Q[y] = 4.9e-5 / 3.6e-5, R_slam = 0.01):  jitter 272 m/s^2, 16 cm from the pose, 39 re-seeds
-#     Q[x] = Q[y] = 0.5, R_slam x30:                              jitter  89 m/s^2,  5 cm from the pose,  0 re-seeds
-# (jitter: RMS acceleration implied by the filter's position at 100 Hz; the local filter has 16.) The pose is followed
-# to about its own noise, and with these variances a pose more than ~2 m away is still rejected by the gate.
-NOISE_GLOBAL = {
-    **NOISE,
-    'Q': [0.5, 0.5, *NOISE['Q'][2:]],  # the dynamics terms follow the local fit
-}
-
-# Global filter only. The pose stamps lag the car by pose_delay; R is generous because the localization is fed the
-# local filter's odometry. pose_delay = 10 ms is what the pose innovations favour on independent (scan-only) SLAM poses
-# of all six takes, with the car model of MODEL above, for both the generous R below and a sharp one (R = 0.01); the
-# likelihood is flat from 0 to 20 ms (0.007 per sample between 10 and 20) and clearly worse from 45 ms. With the car
-# parameters before 2026-10-24 the optimum was 20 ms, so it moves with the actuator delays in MODEL. See docs, section 5c.
-SLAM = {
-    'pose_delay': 0.01,
-    'R_slam_pose': [0.3, 0.3, 0.15],
-    'pose_gate': 16.0,  # chi-square threshold, 3 dof
-    'pose_reseed': 15,  # consecutive gated poses before re-seeding
-}
+# The correction's pose stamps lag the car by pose_delay (the scan match, TF lookup and republish). 10 ms is what the pose
+# innovations favoured on independent (scan-only) SLAM poses of all six takes, with the car model of MODEL above; the
+# likelihood is flat from 0 to 20 ms and clearly worse from 45 ms. With the car parameters before 2026-10-24 the optimum
+# was 20 ms, so it moves with the actuator delays in MODEL. See docs, section 5c.
+POSE_DELAY = 0.01
 
 
 # The map-frame pose as local odometry plus a low-passed map->odom (MapOdomCorrection). tau is set from
 # misc/ekf_correction_sweep.py; the gate is geometric because there is no filter covariance to normalise with.
 CORRECTION = {
-    'tau': 0.15,  # bandwidth of the correction: ~5 cm from the pose, close to the global EKF's tracking
+    'tau': 0.15,  # bandwidth of the correction: ~5 cm from the pose
     'smooth': 0.05,  # extra output lag; takes the per-pose step out of the position (jitter 103 -> 32)
-    'pose_delay': SLAM['pose_delay'],
+    'pose_delay': POSE_DELAY,
     'gate_distance': 2.0,  # m: only a kidnapping; a smaller step (a loop closure) is absorbed at the filter's own pace
     'gate_angle': 1.0,  # rad
     'reseed': 15,  # consecutive rejected poses before the correction is set from the pose
