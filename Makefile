@@ -34,6 +34,7 @@ export_env:
 	@echo "Exporting environment variables to .env file..."
 	@printf "Enter ROS_DOMAIN_ID [48]: " && read domain_id && echo "ROS_DOMAIN_ID=$${domain_id:-48}" > .env
 	@printf "Enter racecar_version [NUC5]: " && read racecar_version && echo "RACECAR_VERSION=$${racecar_version:-NUC5}" >> .env
+	@printf "Use VIO (RealSense + Basalt)? [false]: " && read use_vio && echo "USE_VIO=$${use_vio:-false}" >> .env
 	@echo "HOST_UID=$(shell id -u)" >> .env
 	@echo "HOST_GID=$(shell id -g)" >> .env
 setup_cache: ## Create cache folder structure
@@ -49,13 +50,13 @@ build: ## Build the base workspace (optional: RL=cpu|gpu to include PyTorch)
 	@echo "Detecting system architecture..."
 	@if [ "$$(uname -m)" = "x86_64" ]; then \
 		echo "Building for x86 architecture..."; \
-		docker compose build x86; \
+		docker compose -f docker-compose.yaml -f .devcontainer/docker-compose.build.yaml build x86; \
 	elif [ "$$(uname -m)" = "aarch64" ]; then \
 		echo "Building for Jetson ARM architecture..."; \
-		docker compose build jet; \
+		docker compose -f docker-compose.yaml -f .devcontainer/docker-compose.build.yaml build jet; \
 	elif [ "$$(uname -m)" = "arm64" ]; then \
 		echo "Building for Apple ARM architecture..."; \
-		docker compose build arm; \
+		docker compose -f docker-compose.yaml -f .devcontainer/docker-compose.build.yaml build arm; \
 	else \
 		echo "Unsupported architecture: $$(uname -m)"; \
 		exit 1; \

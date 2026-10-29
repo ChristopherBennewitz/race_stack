@@ -9,6 +9,8 @@
   <arg name="rviz" default="False" description="True to open RViz with the map, scan, car pose, centerline and global waypoints" />
   <arg name="custom_ekf" default="False" description="True runs state_estimation's python ekf_node, False robot_localization" />
   <arg name="ekf_model_type" default="simulator_single_track_model" description="Model of the python ekf_node; only read when custom_ekf:=True" />
+  <arg name="use_vio" default="$(env USE_VIO false)" description="Run RealSense camera + Basalt VIO (set via USE_VIO in .env)" />
+  <arg name="viz_flow" default="False" description="Publish /basalt/flow_image with tracked VIO features" />
 
   <!-- Note: This is merely the share path (read-only) as the base_system
     is not expected to modify maps in any way. -->
@@ -19,6 +21,11 @@
     <include file="$(find-pkg-share f1tenth_gym_ros)/launch/gym_bridge_launch.py">
       <arg name="map_yaml_path" value="$(var map_path)/$(var map_name).yaml" />
     </include>
+    <!-- same sensor transforms as on the real car -->
+    <include file="$(find-pkg-share stack_master)/launch/static_transforms_launch.xml">
+      <arg name="racecar_version" value="$(var racecar_version)" />
+      <arg name="sim" value="True" />
+    </include>
   </group>
 
   <!-- launch real car system -->
@@ -26,6 +33,7 @@
     <!-- launch teleop stack -->
     <include file="$(find-pkg-share stack_master)/launch/teleop_launch.xml">
       <arg name="racecar_version" value="$(var racecar_version)" />
+      <arg name="use_vio" value="$(var use_vio)" />
     </include>
 
     <!-- launch SE -->
@@ -35,6 +43,8 @@
       <arg name="map_name" value="$(var map_name)" />
       <arg name="custom_ekf" value="$(var custom_ekf)" />
       <arg name="ekf_model_type" value="$(var ekf_model_type)" />
+      <arg name="use_vio" value="$(var use_vio)" />
+      <arg name="viz_flow" value="$(var viz_flow)" />
     </include>
   </group>
 

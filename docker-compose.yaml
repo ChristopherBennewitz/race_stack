@@ -5,6 +5,7 @@ x-common-build-settings: &common-build-settings
 x-user-args: &user-args
   RL_TORCH: ${RL_TORCH:-none} # none | cpu | gpu, set via `make build RL=...`
   TORCH_GPU_INDEX_URL: ${TORCH_GPU_INDEX_URL:-} # only needed for RL=gpu on Jetson
+  USE_VIO: ${USE_VIO:-false} # true: build librealsense + basalt_ros into the image
   USER: ${USER}
   UID: ${HOST_UID} # user id must be saved to an environment variable, can be done with `export UID=$(id -u)`
   GID: ${HOST_GID} # group id must be saved to an environment variable, can be done with `export GID=$(id -g)`
@@ -38,16 +39,10 @@ x-common-settings: &common-settings
     - RMW_IMPLEMENTATION=rmw_zenoh_cpp
     - RACECAR_VERSION=${RACECAR_VERSION:-NUC5}
     - RACE_STACK_ROOT=/home/${USER}/ws/src/race_stack
+    - USE_VIO=${USE_VIO:-false}
 
 services:
   jet:
-    build:
-      <<: *common-build-settings
-      dockerfile: ./.devcontainer/Dockerfile
-      args:
-        <<: *user-args
-        IMAGE: dustynv/ros:humble-ros-base-l4t-r36.3.0
-        PLATFORM: jet
     container_name: forzaeth_devcontainer_jet_$USER
     image: race_stack:humble_jet_$USER
     <<: *common-settings
@@ -61,22 +56,10 @@ services:
               capabilities: [gpu]
 
   x86:
-    build:
-      <<: *common-build-settings
-      dockerfile: ./.devcontainer/Dockerfile
-      args:
-        <<: *user-args
-        PLATFORM: x86
     container_name: forzaeth_devcontainer_x86_$USER
     image: race_stack:humble_x86_$USER
     <<: *common-settings
   arm:
-    build:
-      <<: *common-build-settings
-      dockerfile: ./.devcontainer/Dockerfile
-      args:
-        <<: *user-args
-        PLATFORM: arm
     container_name: forzaeth_devcontainer_arm_$USER
     image: race_stack:humble_arm_$USER
     <<: *common-settings
