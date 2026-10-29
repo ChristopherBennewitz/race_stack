@@ -3,7 +3,7 @@
 # Usage: make [target]
 
 # Configurable variables (edit as needed)
-CACHE_DIR := ../race_stack_cache_own/humble
+CACHE_DIR := ../race_stack_cache/humble
 
 # Optional RL dependencies (PyTorch): none | cpu | gpu
 #   make build RL=cpu   CPU-only wheels (NUC, or sim without a GPU)
@@ -40,7 +40,7 @@ setup_cache: ## Create cache folder structure
 	@echo "Creating ros cache directories..."
 	mkdir -p $(CACHE_DIR)/build \
 		$(CACHE_DIR)/install \
-		$(CACHE_DIR)/logs
+		$(CACHE_DIR)/log
 	@echo "Cache directories ready at $(CACHE_DIR)"
 
 
