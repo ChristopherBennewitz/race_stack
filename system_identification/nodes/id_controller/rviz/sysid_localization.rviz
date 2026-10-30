@@ -8,6 +8,7 @@ Panels:
         - /Map1
         - /Safety Map1
         - /Laser Scan1
+        - /Matched Scan1
         - /Car Pose1
         - /Reference Path1
         - /TF1
@@ -89,6 +90,38 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /scan
+      Use Fixed Frame: true
+      Use rainbow: false
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 0; 220; 255
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Min Color: 0; 0; 0
+      Name: Matched Scan
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.029999999329447746
+      Style: Flat Squares
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /scan_matched_points2
       Use Fixed Frame: true
       Use rainbow: false
       Value: true

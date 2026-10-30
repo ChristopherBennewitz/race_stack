@@ -61,6 +61,16 @@ node and the replay both start from. `--evaluate-only` reports the current defau
 accelerometer bias. The sysid bags' SLAM pose came from the live estimator's odometry, so the velocity reference is
 not independent of it. Parameters that end up on the search bound are not determined by the data.
 
+### Per-car parameters of the simulator-model EKF
+
+`defaults.py` holds the NUC2 fit. Each car overrides what it has fitted in `stack_master/config/<car>/ekf.yaml` (the
+`sim_*` parameters, e.g. `sim_mass`, `sim_front_axle_distance`, `sim_R_imu`); `ekf_node_launch.py` loads that file for
+`RACECAR_VERSION` and logs which file it used, or that it fell back to the `defaults.py` values. Keys missing from the
+car's file keep the `defaults.py` value, so a car only lists what it has fitted. `NUC2/ekf.yaml` repeats the defaults
+and `NUC7/ekf.yaml` starts with what is measured on it. The yaml files are installed per file, so after adding or
+renaming one rebuild `stack_master`. Paste the values `ekf_tune.py` prints into the car's `ekf.yaml` instead of
+`defaults.py`; the replay and tuning tools still start from `defaults.py`.
+
 ### An independent SLAM pose
 
 The takes' own `/car_state/pose` was computed from the live estimator's odometry, so it is not independent of the filter.

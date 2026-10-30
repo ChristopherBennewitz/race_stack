@@ -11,7 +11,9 @@ transforms:
       parent: base_link,
       child: imu,
       xyz: [0.07, 0.0, 0.05],
-      quat: [0.0, 0.0, -0.7071068, 0.7071068],
+      # -90 deg yaw plus the 1.6 deg tilt that makes the resting accelerometer read gravity on z only (ax, ay = 0).
+      # Measured at standstill: mean /imu accel = [0.240, 0.138, 9.800] m/s^2 over 8 s with the old pure-yaw quat.
+      quat: [0.013641, -0.0036989, -0.7070362, 0.7070362],
     }
   # RealSense D435 (VIO), remeasure on a mount change
   - {

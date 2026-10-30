@@ -1,0 +1,39 @@
+# Simulator-model EKF of NUC7 (python ekf_node, model_type simulator_single_track_model).
+# Only the entries listed here override the defaults in state_estimation/ekf_node/defaults.py, and those defaults are the
+# NUC2 fit. So everything NOT listed below is still NUC2's value until it is fitted on NUC7 sysid takes; in particular
+# the vehicle model (mass, inertia, axle distances, tires) and the actuator model (steer/speed gains and delays).
+# Values must keep a decimal point (ROS reads 4 as an integer and rejects it for a double parameter).
+/**:
+  ros__parameters:
+    # --- measured on NUC7 ---
+    # IMU position along base_link x, from static_transforms.yaml
+    sim_imu_x: 0.07
+    # Resting accelerometer mean (m/s^2) left after the static_transforms.yaml tilt correction; 8 s at standstill.
+    sim_imu_accel_bias: [-0.04, 0.06]
+
+    # --- still NUC2's, fit on NUC7 sysid takes and move here ---
+    # The wheelbase of NUC7 is 0.258 m, so front_axle_distance + rear_axle_distance must add up to it (NUC2: 0.321).
+    sim_mass: 2.7
+    sim_yaw_inertia: 0.05
+    sim_front_axle_distance: 0.133
+    sim_rear_axle_distance: 0.125
+    sim_cg_height: 0.03
+    # sim_front_B:
+    # sim_front_C:
+    # sim_front_D:
+    # sim_front_E:
+    # sim_rear_B:
+    # sim_rear_C:
+    # sim_rear_D:
+    # sim_rear_E:
+    # sim_steer_gain:
+    # sim_steer_bias:
+    # sim_steer_delay:
+    # sim_steer_latency:
+    # sim_speed_delay:
+    # sim_drive_gain:
+    # sim_brake_gain:
+    # sim_R_imu:
+    # sim_R_vesc:
+    # sim_Q:
+    # sim_imu_accel_lag:

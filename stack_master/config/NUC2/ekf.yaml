@@ -1,0 +1,39 @@
+# Simulator-model EKF of NUC2 (python ekf_node, model_type simulator_single_track_model).
+# These are the values fitted for NUC2 (actuator/tires/mass from the sim sysid, noise from misc/ekf_tune.py); they
+# are the same numbers as state_estimation/ekf_node/defaults.py, which stays the fallback for cars without an
+# ekf.yaml. Values must keep a decimal point (ROS reads 4 as an integer and rejects it for a double parameter).
+/**:
+  ros__parameters:
+    # vehicle and actuator model
+    sim_steer_gain: 1.43527
+    sim_steer_bias: 4.20711e-05
+    sim_steer_delay: 0.0458081
+    sim_steer_latency: 0.0441209
+    sim_speed_delay: 0.0101888
+    sim_drive_gain: 9.18827
+    sim_brake_gain: 6.51316
+    sim_front_drive_frac: 0.5
+    sim_constraint_time_constant: 0.03
+    sim_blend_center: 0.6
+    sim_slip_speed_regularizer: 0.1
+    sim_mass: 3.718
+    sim_yaw_inertia: 0.0561
+    sim_front_axle_distance: 0.17334
+    sim_rear_axle_distance: 0.14766
+    sim_cg_height: 0.074
+    sim_front_B: 59.9965
+    sim_front_C: 1.00053
+    sim_front_D: 0.52523
+    sim_front_E: 0.0
+    sim_rear_B: 49.5247
+    sim_rear_C: 1.00001
+    sim_rear_D: 0.624743
+    sim_rear_E: 0.0
+    sim_imu_x: 0.07
+    # filter noise, IMU accelerometer model and prediction step
+    sim_R_imu: [0.1, 0.0009, 1.392, 2.136]
+    sim_imu_accel_bias: [0.05, 0.56]
+    sim_imu_accel_lag: 0.05
+    sim_R_vesc: [1000000.0, 1000000.0, 1000000.0, 0.0225, 100.0, 0.8382]
+    sim_Q: [4.9e-05, 3.6e-05, 0.004351, 0.08596, 0.01918, 0.4135, 0.1037]
+    sim_predict_substep: 0.005

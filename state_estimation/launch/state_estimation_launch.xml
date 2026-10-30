@@ -21,6 +21,7 @@
         <!-- EKF IMU + Odom Fusion -->
         <group unless="$(var skip_early_fusion)">
             <include file="$(find-pkg-share state_estimation)/launch/ekf_node_launch.py">
+                <arg name="racecar_version" value="$(var racecar_version)" />
                 <arg name="custom_ekf" value="$(var custom_ekf)" />
                 <arg name="model_type" value="$(var ekf_model_type)" />
                 <arg name="global_ekf" value="$(var global_ekf)" />
