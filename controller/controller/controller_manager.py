@@ -387,6 +387,27 @@ class Controller(Node):
         # subscription must be too: a volatile one never receives what was published before it connected.
         self.create_subscription(WpntArray, '/centerline_waypoints', self.centerline_cb, LATCHED_QOS)
 
+    def init_mpc_recovery(self):
+        """Turns on the MPC's multi-point turn (reverse and forward arcs) if ``mpc_recovery`` is set.
+
+        Off by default: the car backs up on its own, from the map alone. It needs the wheelbase and the steering gain
+        (road-wheel angle per unit of command) of the car the MPC was exported for, which have no defaults so that a wrong
+        steering model can never be assumed: with either missing the maneuver stays off. For NUC7: 0.258 and 1.158.
+        """
+        def param(name, default):
+            return self.get_parameter_or(name, Parameter(name, value=default)).value
+
+        if not param('mpc_recovery', False):
+            return
+        wheelbase, steer_gain = param('mpc_recovery_wheelbase_m', 0.0), param('mpc_recovery_steer_gain', 0.0)
+        if wheelbase <= 0.0 or steer_gain <= 0.0:
+            self.get_logger().error("mpc_recovery needs mpc_recovery_wheelbase_m and mpc_recovery_steer_gain; it stays off")
+            return
+        self.mpc_controller.configure_recovery(
+            wheelbase, steer_gain, radius=param('mpc_recovery_radius_m', 0.0) or None,
+            speed=param('mpc_recovery_speed_mps', 0.4), clearance=param('mpc_recovery_clearance_m', 0.06))
+        self.get_logger().info("MPC recovery on: the car reverses and turns when it stands inside the track margin")
+
     def init_mpc_controller(self):
         from controller.mpc.mpc_controller import MPC_Controller
 
@@ -399,6 +420,12 @@ class Controller(Node):
         self.mpc_latency_comp = self.get_parameter_or('mpc_latency_comp', Parameter('mpc_latency_comp', value=True)).value
         self.mpc_state_lag = self.get_parameter_or('mpc_state_lag_s', Parameter('mpc_state_lag_s', value=0.012)).value
         self.mpc_compute_lag = self.get_parameter_or('mpc_compute_lag_s', Parameter('mpc_compute_lag_s', value=0.0075)).value
+        # The compute lag follows the measured solve time (smoothed), plus the time to apply the command; at the usual
+        # 6.3 ms solve it equals the fixed 7.5 ms above, which is used until a solve has been timed or with the switch off.
+        self.mpc_compute_lag_adaptive = self.get_parameter_or(
+            'mpc_compute_lag_adaptive', Parameter('mpc_compute_lag_adaptive', value=True)).value
+        self.mpc_apply_lag = self.get_parameter_or('mpc_apply_lag_s', Parameter('mpc_apply_lag_s', value=0.0012)).value
+        self.init_mpc_recovery()
         self.rate = self.mpc_controller.control_hz
         # The MPC's state is at the centre of gravity; the odometry is for base_link (the rear axle).
         self.mpc_cog_offset = self.get_parameter_or(
@@ -755,7 +782,10 @@ class Controller(Node):
         # The EKF's velocity is that of base_link, so its sideways part is the CoG's minus l_r * yaw_rate.
         x, y, vy = base_link_to_cog(x, y, yaw, twist.linear.y, twist.angular.z, self.mpc_cog_offset)
         if self.mpc_latency_comp:
-            lag = self.mpc_state_lag + min(max(self.odom_age, 0.0), self.rl_max_odom_age) + self.mpc_compute_lag
+            compute_lag = self.mpc_compute_lag
+            if self.mpc_compute_lag_adaptive:
+                compute_lag = self.mpc_controller.compute_lag(self.mpc_apply_lag, self.mpc_compute_lag)
+            lag = self.mpc_state_lag + min(max(self.odom_age, 0.0), self.rl_max_odom_age) + compute_lag
             x, y, yaw = extrapolate_state(x, y, yaw, twist.linear.x, vy, twist.angular.z, lag)
 
         # The command issued last cycle has now been applied for one period.

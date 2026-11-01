@@ -65,6 +65,17 @@ and the controller's latency compensation it crashed in 0 of 10 at 5 m/s, and 0.
 stages is the optimum. Details, the three test rounds
 and the harness (`scripts/benchmark_track.py`): [docs/track_clearance.md](docs/track_clearance.md).
 
+## Getting unstuck
+
+The MPC drives forward only and keeps a margin from the walls, so a car that stands still with its heading turned against the
+track (after a spin or a hairpin taken too slowly) has no plan that makes progress, and it stays there. The controller can then turn
+it around with a multi-point turn in reverse and forward gear (`controller/controller/mpc/recovery.py`, the same file as
+`f1tenth_parallel_sim/src/mpc/recovery.py`; a test keeps the two identical): it picks the gear and steering whose arc turns the heading most
+toward the track without the car's outline touching a wall, drives it until the walls get close, stops, and repeats until the heading is
+within 34 degrees of the track and the car is out of the MPC's keep-out band. It is off on the car by default (`mpc_recovery`, see the
+controller README). In the sim (`scripts/run_mpc.py`, on by default, `--no-recovery`), the progress MPC with estimator delays that left it
+stuck for the rest of the run (0 laps in 60 s) completes 3 to 5 laps.
+
 ## Tests
 
 `pytest progress_mpc/test` runs the closed loop on a synthetic track with the MPC's own model as the plant.

@@ -195,3 +195,24 @@ The Follow-The-Gap (FTG) Controller is a simple reactive controller which uses d
  - `max_lidar_dist`: Maximum possible scan distance of the LiDAR.
  - `range_offset`: Range of LiDAR points to be considered, only consider `[range_offset,-range_offset]`.
  - `debug`: If set to `True`, the best gap, best point and preprocessed LiDAR scans are published as Markers.
+
+
+# MPC controller
+
+## Description
+`controller/mpc/mpc_controller.py` runs the C++ progress MPC (`progress_mpc`) in the controller manager's `MPC` mode. It plans from the
+EKF state in the map frame and returns a speed and a steering angle for the actuation manager.
+
+## Parameters (ROS, set at launch)
+- `mpc_latency_comp` (default `True`): the state is moved forward by the time between its sample and the command acting on the car,
+  at constant velocity: `mpc_state_lag_s` (estimator lag, 0.012) + the odometry message age (measured from its stamp, at most
+  `max_odom_age_s`) + the compute lag.
+- `mpc_compute_lag_adaptive` (default `True`): the compute lag is the smoothed measured solve time + `mpc_apply_lag_s` (0.0012), at most one
+  control period; with 6.3 ms solves it equals the fixed `mpc_compute_lag_s` (0.0075), which is used until a solve has been timed.
+- `mpc_recovery` (default `False`): when the car stands still and the MPC asks for no speed for a second (it stopped inside the track margin,
+  pointing against the track), take over and turn it around with reverse and forward arcs (`controller/mpc/recovery.py`), then hand back
+  to the MPC. The arcs are checked against the track's walls, nothing else: a car on a track with other objects must not use it unwatched.
+  Needs `mpc_recovery_wheelbase_m` and `mpc_recovery_steer_gain` (road-wheel angle per unit of command) of the car the MPC was exported for, with
+  no defaults so that a wrong steering model is never assumed (NUC7: 0.258 and 1.158); optional: `mpc_recovery_radius_m` (the circle that
+  stands for the car, default the MPC's clearance less its 0.1 m margin), `mpc_recovery_speed_mps` (0.4), `mpc_recovery_clearance_m` (0.06).
+  Lost odometry cancels it. `/controller/diagnostics` reports `recovering`, `recoveries` and `recovery_failures`.
