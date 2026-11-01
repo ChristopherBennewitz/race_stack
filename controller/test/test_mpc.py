@@ -357,3 +357,66 @@ def test_the_verdict_says_when_the_car_is_being_turned_around(stubbed_with_recov
         times[0] += 0.025
     level, message = controller.verdict(controller.diagnostics())
     assert level == 'warn' and 'turning the car around' in message
+
+
+# --- AC4MPC as the planner (a stub, so these run without libtorch) ----------------------------------------------------
+
+class StubAc4Mpc(StubMpc):
+    """The AC4MPC's extras: which branch won each step."""
+
+    def __init__(self, policy, **options):
+        super().__init__()
+        self.policy, self.options = policy, options
+        self.candidate_wins = {'actor': 3, 'mpc_active': 2}
+        self.stats['candidate'] = 'actor'
+
+
+def test_a_given_planner_replaces_the_progress_mpc(monkeypatch):
+    import sys
+    import types
+
+    module = types.ModuleType('progress_mpc')
+    module.ProgressMpc = None  # must not be used
+    monkeypatch.setitem(sys.modules, 'progress_mpc', module)
+    planner = StubAc4Mpc('policy.ts')
+    controller = MPC_Controller('ccw', logging.getLogger('test'), planner=planner)
+    assert controller.mpc is planner
+    controller.main_loop(0.0, 0.0, 0.0, 2.0, 0.0, 0.0)
+    d = controller.diagnostics()
+    assert d['wins_actor'] == 3 and d['wins_mpc_active'] == 2 and d['wins_mpc_parallel'] == 0 and d['wins_fallback'] == 0
+
+
+def test_the_plain_mpc_reports_no_branch_wins(stubbed):
+    controller, _ = stubbed
+    controller.main_loop(0.0, 0.0, 0.0, 2.0, 0.0, 0.0)
+    assert not [key for key in controller.diagnostics() if key.startswith('wins_')]
+
+
+def test_make_ac4mpc_passes_the_options_on(monkeypatch):
+    import sys
+    import types
+
+    from controller.mpc.mpc_controller import make_ac4mpc
+
+    module = types.ModuleType('progress_mpc')
+    module.Ac4Mpc = StubAc4Mpc
+    monkeypatch.setitem(sys.modules, 'progress_mpc', module)
+    planner = make_ac4mpc('policy.ts', mode='actor', eval_rollout=3, threads=False)
+    assert planner.policy == 'policy.ts'
+    assert planner.options['mode'] == 'actor' and planner.options['eval_rollout'] == 3 and not planner.options['threads']
+
+
+def test_make_ac4mpc_says_what_is_missing_when_the_package_has_no_ac4mpc(monkeypatch):
+    import sys
+    import types
+
+    from controller.mpc.mpc_controller import make_ac4mpc
+
+    module = types.ModuleType('progress_mpc')
+    module.Ac4Mpc = None
+    monkeypatch.setitem(sys.modules, 'progress_mpc', module)
+    with pytest.raises(RuntimeError, match='libtorch'):
+        make_ac4mpc('policy.ts')
+    monkeypatch.setitem(sys.modules, 'progress_mpc', None)  # not importable at all
+    with pytest.raises(RuntimeError, match='libtorch'):
+        make_ac4mpc('policy.ts')

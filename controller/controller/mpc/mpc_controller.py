@@ -86,20 +86,45 @@ def track_envelope(xy, d_left, d_right, clearance):
     return left, right
 
 
+def make_ac4mpc(policy, mode='full', value_weight=0.2, reinit_period=5, eval_correction=0.0, eval_rollout=0,
+                threads=True, torch_threads=1, track_spacing=0.1):
+    """The C++ AC4MPC (actor and critic guided progress MPC) for `MPC_Controller`'s `planner`.
+
+    `policy` is the TorchScript module the sim repo's ``scripts/export_policy.py`` writes from a PPO checkpoint; it must
+    have been trained at the control rate the MPC was exported for. See ``progress_mpc/README.md`` for the modes.
+    """
+    try:
+        from progress_mpc import Ac4Mpc
+    except ImportError as e:
+        raise RuntimeError("AC4MPC mode needs the progress_mpc package built with libtorch and generated_ac4mpc/ "
+                           "(see progress_mpc/README.md)") from e
+    if Ac4Mpc is None:
+        raise RuntimeError("progress_mpc was built without AC4MPC: it needs libtorch and generated_ac4mpc/ "
+                           "(see progress_mpc/README.md)")
+    return Ac4Mpc(policy, mode=mode, value_weight=value_weight, reinit_period=reinit_period,
+                  eval_correction=eval_correction, eval_rollout=eval_rollout, threads=threads,
+                  torch_threads=torch_threads, track_spacing=track_spacing)
+
+
 class MPC_Controller:
     """Runs the C++ progress MPC (no ROS). Driven by the controller manager at the MPC's control rate.
 
     Inputs: the track centerline with widths (set once) and the car state from the EKF in the map frame.
     Output: speed + steering angle for the actuation manager, which rate-limits them as the MPC assumed.
+
+    `planner` is the solver to drive instead of the plain progress MPC: any object with its interface, in practice
+    `progress_mpc.Ac4Mpc` (see `make_ac4mpc`), whose plan, command and diagnostics the rest of this class treats alike.
     """
 
-    def __init__(self, direction, logger, track_spacing=0.1, clock=time.monotonic):
-        try:
-            from progress_mpc import ProgressMpc
-        except ImportError as e:
-            raise RuntimeError("MPC mode needs the progress_mpc package (it builds against acados; "
-                               "see progress_mpc/README.md)") from e
-        self.mpc = ProgressMpc(track_spacing)
+    def __init__(self, direction, logger, track_spacing=0.1, clock=time.monotonic, planner=None):
+        if planner is None:
+            try:
+                from progress_mpc import ProgressMpc
+            except ImportError as e:
+                raise RuntimeError("MPC mode needs the progress_mpc package (it builds against acados; "
+                                   "see progress_mpc/README.md)") from e
+            planner = ProgressMpc(track_spacing)
+        self.mpc = planner
         self.direction = direction
         self.last_cmd = None
         self.track = None  # the oriented centerline and widths handed to the solver
@@ -116,7 +141,8 @@ class MPC_Controller:
         self._expected = None  # where the plan said the car would be one control period after the last solve, and when
         self._last_call = None
         self._window = self._empty_window()
-        logger.info(f"Progress MPC: horizon {self.mpc.horizon} x {self.mpc.control_dt} s, "
+        logger.info(f"{'AC4MPC' if hasattr(self.mpc, 'candidate_wins') else 'Progress MPC'}: "
+                    f"horizon {self.mpc.horizon} x {self.mpc.control_dt} s, "
                     f"speed <= {self.mpc.speed_max} m/s, steer <= {self.mpc.steer_max} rad")
 
     @property
@@ -295,7 +321,15 @@ class MPC_Controller:
             'recovering': float(self.recovery is not None and self.recovery.active),
             'recoveries': float(self.recovery.maneuvers if self.recovery is not None else 0),
             'recovery_failures': float(self.recovery.failures if self.recovery is not None else 0),
+            **self._candidate_wins(),
         }
+
+    def _candidate_wins(self):
+        """Cumulative steps each AC4MPC branch won (empty for the plain MPC): the actor's rollout and the two solvers."""
+        wins = getattr(self.mpc, 'candidate_wins', None)
+        if wins is None:
+            return {}
+        return {f'wins_{name}': float(wins.get(name, 0)) for name in ('mpc_active', 'mpc_parallel', 'actor', 'fallback')}
 
     def verdict(self, d):
         """``(level, message)`` for a ``diagnostics()`` dict: the first thing wrong, most severe first."""

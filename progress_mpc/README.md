@@ -76,6 +76,83 @@ within 34 degrees of the track and the car is out of the MPC's keep-out band. It
 controller README). In the sim (`scripts/run_mpc.py`, on by default, `--no-recovery`), the progress MPC with estimator delays that left it
 stuck for the rest of the run (0 laps in 60 s) completes 3 to 5 laps.
 
+## AC4MPC (actor- and critic-guided MPC)
+
+`progress_mpc.Ac4Mpc` is the C++ port of the sim repo's AC4MPC-RTI (`src/mpc/ac4mpc.py`, Reiter et al., "AC4MPC", Alg. 2/3): the
+same progress OCP with a trained PPO actor and critic around it. The controller manager runs it with `mode:=AC4MPC`
+(see the controller README). Per control step:
+
+- the actor rolls the model out from the measured state (one candidate plan);
+- the *active* solver continues from the last chosen plan, with the actor's step appended where the horizon moved on, and the
+  *parallel* solver does the same from its own plan, re-seeded with the actor's rollout every `reinit_period` steps;
+- the critic enters the solvers' terminal cost as its linearization at the plan's end (`value_weight` is the paper's beta), so
+  the QP sees what lies beyond the horizon;
+- `ac4eval` scores the three candidates on the model (the OCP's cost with the track-limit slacks, plus the critic at the end)
+  and the cheapest one is applied. Its plan seeds the next step.
+
+`mode` picks the parts: `critic` (one solver, the critic's terminal term), `actor` (the three branches, no critic) or `full`.
+All of it is C++: the rollout, the track projections, the observation, the candidate scoring and the two acados solvers. The networks run
+in libtorch (a TorchScript module, double precision, one thread per branch), the critic's gradient by autograd chained through
+the observation's geometry. The three branches run on their own threads, the actor's rollout on the caller's, each with its own
+copy of the networks and its own solver, so a step takes about as long as its longest branch.
+
+### Building and exporting
+
+Needs everything the plain MPC does, plus libtorch (the `torch` Python package the RL mode uses, `make build RL=cpu|gpu`) and an
+export of the AC4MPC's OCP:
+
+```bash
+export ACADOS_SOURCE_DIR=~/acados LD_LIBRARY_PATH=~/acados/lib:$LD_LIBRARY_PATH
+uv run --project ../f1tenth_parallel_sim python progress_mpc/scripts/export_ac4mpc.py --sim-repo ../f1tenth_parallel_sim
+colcon build --packages-select progress_mpc        # TORCH_ROOT=<torch package dir> if `python3` has no torch
+```
+
+`scripts/export_ac4mpc.py` writes `generated_ac4mpc/` (commit it, like `generated/`): the OCP with the critic's terminal term (its
+parameters are the stage reference followed by the critic's point and gradient, so one export serves every checkpoint), CasADi's C
+code for the model step and the cost pieces `ac4eval` sums, and the car constants. It takes the sim's `configs/ac4mpc.toml`, so the cost weights are the
+AC4MPC ones (small steering-rate weight, speed cap = the policy's action range), with this package's track margin and QP settings.
+Without libtorch or without the export the package builds as before and `progress_mpc.Ac4Mpc` is `None`.
+
+The policy comes from a PPO checkpoint, trained in the sim repo at the control rate of this export (40 Hz), in `history` or `adapt`
+mode (a `privileged` one reads plant parameters the car does not have):
+
+```bash
+uv run python scripts/export_policy.py --checkpoint checkpoints/ppo_f1tenth_ac4mpc.pt --out policy.ts   # in the sim repo
+```
+
+```python
+from progress_mpc import Ac4Mpc
+mpc = Ac4Mpc("policy.ts", mode="full")          # value_weight, reinit_period, eval_correction, eval_rollout, threads, torch_threads
+mpc.set_track(centerline_xy, d_left, d_right)   # as ProgressMpc
+steer, speed = mpc.step([x, y, yaw, vx, vy, yaw_rate])
+mpc.report_applied(steer_applied, speed_applied)
+mpc.stats["candidate"], mpc.candidate_wins      # which branch won this step / how often each did
+```
+
+The car, the horizon and the weights are baked into the export, so the policy must have been trained for the same car (its
+action range, latencies and body): the export and the checkpoint are not checked against each other beyond the control period.
+
+### Timing and agreement with the sim
+
+Measured on a 16-core laptop with a randomly initialized network of the training size (50 waypoints, history 40, 256-wide
+layers, conv encoders), per control step over 60 steps of the closed loop:
+
+| mode | threads | step | longest branch |
+| --- | --- | --- | --- |
+| critic | one solver | 1.9 ms | solver 1.8 ms |
+| actor | 3 | 2.9 ms | solvers 2.2 / 2.7 ms, actor rollout 1.0 ms |
+| full | 3 | 3.3 ms | solvers 2.6 / 3.2 ms, actor rollout 1.1 ms |
+| full | none | 5.0 ms | |
+
+The actor's 40 network evaluations cost 1 ms; the solvers dominate. The NUC is several times slower than the laptop for the
+solver (the plain MPC's solve is 1.4 ms here and ~6 ms on the car), so expect roughly 10 to 15 ms in `full` mode, inside the 25 ms
+period; measure it with `/controller/diagnostics` (`solve_ms_*`, and `wins_*` for the branches).
+
+`test/test_ac4mpc.py` runs the sim's Python AC4MPC and this one on the same checkpoint, track and measurements: the actor, the
+critic's value and gradient and the centerline projection agree to 1e-16, and the commands and the winning branch agree step by step
+(about 1e-15 at first; two RTI runs drift apart in the closed loop as any two do, so compare outcomes over many steps). The threaded and the single-threaded run
+give identical commands.
+
 ## Tests
 
 `pytest progress_mpc/test` runs the closed loop on a synthetic track with the MPC's own model as the plant.

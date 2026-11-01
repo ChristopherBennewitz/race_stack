@@ -1,11 +1,17 @@
 <?xml version="1.0"?>
 <launch>
   <arg name="LU_table" default="NUC5_hangar_pacejka"/>
-  <arg name="mode" default="MAP" description="Mode of operation: MAP / PP / RL / MPC / (FTG). methods in brackets have not been implemented"/> <!-- TODO implement PP and MAPPING -->
+  <arg name="mode" default="MAP" description="Mode of operation: MAP / PP / RL / MPC / AC4MPC / (FTG). methods in brackets have not been implemented"/> <!-- TODO implement PP and MAPPING -->
   <arg name="checkpoint" default="" description="RL mode only: path to a checkpoint saved by f1tenth_parallel_sim scripts/train.py"/>
   <arg name="device" default="cpu" description="RL mode only: torch device"/>
-  <arg name="direction" default="ccw" description="RL / MPC modes only: 'ccw' / 'cw', the driving direction (the RL policy was trained for one)"/>
-  <arg name="odom_topic" default="/state_estimation/odom" description="RL / MPC modes only: the state estimate, in any frame. /state_estimation/odom_map is the smooth map-frame one (local odometry plus the corrected map-&gt;odom, from state_estimation's map_odom_node; the simulator does not publish it)"/>
+  <arg name="ac4mpc_policy" default="" description="AC4MPC mode only: the TorchScript policy exported from a checkpoint by f1tenth_parallel_sim scripts/export_policy.py"/>
+  <arg name="ac4mpc_mode" default="full" description="AC4MPC mode only: critic (value terminal cost) / actor (actor seeds and competes) / full (both)"/>
+  <arg name="ac4mpc_value_weight" default="0.2" description="AC4MPC mode only: the paper's beta, the scale on the critic in the QP"/>
+  <arg name="ac4mpc_reinit_period" default="5" description="AC4MPC mode only: steps between re-seeding the parallel solver with the actor's rollout"/>
+  <arg name="ac4mpc_eval_correction" default="0.0" description="AC4MPC mode only: alpha, actor feedback on a candidate's commands when it is scored"/>
+  <arg name="ac4mpc_eval_rollout" default="0" description="AC4MPC mode only: actor steps past the horizon when a candidate is scored"/>
+  <arg name="direction" default="ccw" description="RL / MPC / AC4MPC modes only: 'ccw' / 'cw', the driving direction (the RL policy was trained for one)"/>
+  <arg name="odom_topic" default="/state_estimation/odom" description="RL / MPC / AC4MPC modes only: the state estimate, in any frame. /state_estimation/odom_map is the smooth map-frame one (local odometry plus the corrected map-&gt;odom, from state_estimation's map_odom_node; the simulator does not publish it)"/>
   <arg name="sim_opp" default="False" description="True to remap topics to the simulated opponent ones" />
 
   <!--  launch L1 controller -->
@@ -23,6 +29,12 @@
         <param name="LU_table" value="$(var LU_table)"/>
         <param name="checkpoint" value="$(var checkpoint)"/>
         <param name="device" value="$(var device)"/>
+        <param name="ac4mpc_policy" value="$(var ac4mpc_policy)"/>
+        <param name="ac4mpc_mode" value="$(var ac4mpc_mode)"/>
+        <param name="ac4mpc_value_weight" value="$(var ac4mpc_value_weight)"/>
+        <param name="ac4mpc_reinit_period" value="$(var ac4mpc_reinit_period)"/>
+        <param name="ac4mpc_eval_correction" value="$(var ac4mpc_eval_correction)"/>
+        <param name="ac4mpc_eval_rollout" value="$(var ac4mpc_eval_rollout)"/>
         <param name="direction" value="$(var direction)"/>
         <param name="odom_topic" value="$(var odom_topic)"/>
     </node>

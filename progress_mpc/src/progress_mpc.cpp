@@ -1,4 +1,5 @@
 #include "progress_mpc/progress_mpc.hpp"
+#include "track.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -15,12 +16,9 @@ namespace {
 
 using namespace generated;
 
-constexpr int kRefDim = 7;  // centre x, y; tangent x, y; arc length at centre; left, right width
 constexpr int kStateDim = kVehicleDim + kHistory;  // vehicle state, then the steering and the speed history, newest first
 constexpr int kSpeedHistory = kHistory - kSteerHistory;
 constexpr int kAugDim = kStateDim + 1;             // the OCP state adds the last speed command
-constexpr int kVehicleSearchLo = -15, kVehicleSearchHi = 45;  // centerline points around the last match
-constexpr int kStageSearch = 10;  // points a later stage's reference may advance past the previous one
 
 static_assert(kVehicleDim == kVehicleStateDim, "the generated model's vehicle state changed");
 static_assert(kAugDim == PROGRESS_MPC_NX, "the generated OCP does not match the exported step function");
@@ -35,76 +33,6 @@ double seconds_since(Clock::time_point start) {
 }
 
 double clamp(double v, double lo, double hi) { return std::min(std::max(v, lo), hi); }
-
-int wrap(int i, int n) { return ((i % n) + n) % n; }
-
-// A closed centerline with per-point tangent, arc length and widths, at uniform spacing.
-struct Track {
-  int count = 0;
-  double length = 0.0;
-  std::vector<std::array<double, 2>> center, tangent;
-  std::vector<double> cum_s, w_left, w_right;
-};
-
-Track build_track(std::vector<std::array<double, 2>> pts, std::vector<double> wl, std::vector<double> wr,
-                  double spacing) {
-  if (pts.size() < 4 || wl.size() != pts.size() || wr.size() != pts.size())
-    throw std::invalid_argument("track needs >= 4 points and one left/right width per point");
-  // A repeated closing point would make a zero-length segment.
-  if (std::hypot(pts.front()[0] - pts.back()[0], pts.front()[1] - pts.back()[1]) < 1e-6) {
-    pts.pop_back();
-    wl.pop_back();
-    wr.pop_back();
-  }
-  const size_t n = pts.size();
-  std::vector<double> seg_start(n + 1, 0.0);
-  for (size_t i = 0; i < n; ++i) {
-    const auto& a = pts[i];
-    const auto& b = pts[(i + 1) % n];
-    seg_start[i + 1] = seg_start[i] + std::hypot(b[0] - a[0], b[1] - a[1]);
-  }
-  const double total = seg_start[n];
-  if (!(total > 0.4)) throw std::invalid_argument("track is too short");
-
-  Track t;
-  t.length = total;
-  if (spacing > 0.0) {
-    t.count = std::max(4, static_cast<int>(std::lround(total / spacing)));
-    const double step = total / t.count;
-    t.center.resize(t.count);
-    t.cum_s.resize(t.count);
-    t.w_left.resize(t.count);
-    t.w_right.resize(t.count);
-    size_t seg = 0;
-    for (int k = 0; k < t.count; ++k) {
-      const double s = k * step;
-      while (seg + 1 < n && seg_start[seg + 1] <= s) ++seg;
-      const double len = seg_start[seg + 1] - seg_start[seg];
-      const double f = len > 0.0 ? (s - seg_start[seg]) / len : 0.0;
-      const size_t j = (seg + 1) % n;
-      t.center[k] = {pts[seg][0] + f * (pts[j][0] - pts[seg][0]), pts[seg][1] + f * (pts[j][1] - pts[seg][1])};
-      t.w_left[k] = wl[seg] + f * (wl[j] - wl[seg]);
-      t.w_right[k] = wr[seg] + f * (wr[j] - wr[seg]);
-      t.cum_s[k] = s;
-    }
-  } else {
-    t.count = static_cast<int>(n);
-    t.center = std::move(pts);
-    t.w_left = std::move(wl);
-    t.w_right = std::move(wr);
-    t.cum_s.assign(seg_start.begin(), seg_start.end() - 1);
-  }
-  t.tangent.resize(t.count);
-  for (int k = 0; k < t.count; ++k) {
-    const auto& a = t.center[wrap(k - 1, t.count)];
-    const auto& b = t.center[wrap(k + 1, t.count)];
-    const double dx = b[0] - a[0], dy = b[1] - a[1];
-    const double norm = std::hypot(dx, dy);
-    if (norm < 1e-9) throw std::invalid_argument("track has coincident points");
-    t.tangent[k] = {dx / norm, dy / norm};
-  }
-  return t;
-}
 
 }  // namespace
 

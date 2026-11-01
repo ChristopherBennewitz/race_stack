@@ -216,3 +216,21 @@ EKF state in the map frame and returns a speed and a steering angle for the actu
   no defaults so that a wrong steering model is never assumed (NUC7: 0.258 and 1.158); optional: `mpc_recovery_radius_m` (the circle that
   stands for the car, default the MPC's clearance less its 0.1 m margin), `mpc_recovery_speed_mps` (0.4), `mpc_recovery_clearance_m` (0.06).
   Lost odometry cancels it. `/controller/diagnostics` reports `recovering`, `recoveries` and `recovery_failures`.
+
+# AC4MPC controller
+
+The controller manager's `AC4MPC` mode (`mode:=AC4MPC`) is the `MPC` mode with the actor- and critic-guided planner of `progress_mpc`
+(`progress_mpc.Ac4Mpc`, see its README) in place of the plain one: the same state handling, latency compensation, recovery, diagnostics and
+markers, a different solver. It needs `progress_mpc` built with libtorch and `generated_ac4mpc/`.
+
+- `ac4mpc_policy` (required): the TorchScript policy, written from a PPO checkpoint by the sim repo's `scripts/export_policy.py`. The
+  checkpoint must have been trained for the car and the 40 Hz control rate the MPC was exported for.
+- `ac4mpc_mode` (`full`): `critic`, `actor` or `full`. `ac4mpc_value_weight` (0.2): the critic's weight in the QP (the paper's beta).
+  `ac4mpc_reinit_period` (5): steps between re-seeding the parallel solver with the actor's rollout. `ac4mpc_eval_correction` (0.0) and
+  `ac4mpc_eval_rollout` (0): actor feedback and actor steps past the horizon when a candidate plan is scored.
+- `/controller/diagnostics` adds `wins_mpc_active`, `wins_mpc_parallel`, `wins_actor` and `wins_fallback`: how many steps each branch's plan was applied;
+  the RViz text shows the branch that won the last step.
+
+```bash
+ros2 launch controller controller_launch.xml mode:=AC4MPC ac4mpc_policy:=/path/policy.ts odom_topic:=/state_estimation/odom_map
+```

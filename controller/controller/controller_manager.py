@@ -41,7 +41,7 @@ from typing import List, Dict, Union
 
 class Controller(Node):
     # Modes driven by the centerline and the state estimate alone: no global waypoints, Frenet converter or L1 tuning.
-    STANDALONE_MODES = ("RL", "MPC")
+    STANDALONE_MODES = ("RL", "MPC", "AC4MPC")
 
     def __init__(self):
         super().__init__('controller_manager',
@@ -105,9 +105,9 @@ class Controller(Node):
             self.get_logger().info("Initializing RL controller")
             self.init_rl_controller()
             self.prioritize_dyn = False
-        elif self.mode == "MPC":
-            self.get_logger().info("Initializing MPC controller")
-            self.init_mpc_controller()
+        elif self.mode in ("MPC", "AC4MPC"):
+            self.get_logger().info(f"Initializing {self.mode} controller")
+            self.init_mpc_controller(ac4mpc=self.mode == "AC4MPC")
             self.prioritize_dyn = False
         else:
             self.get_logger().error(f"Invalid mode: {self.mode}")
@@ -408,12 +408,32 @@ class Controller(Node):
             speed=param('mpc_recovery_speed_mps', 0.4), clearance=param('mpc_recovery_clearance_m', 0.06))
         self.get_logger().info("MPC recovery on: the car reverses and turns when it stands inside the track margin")
 
-    def init_mpc_controller(self):
+    def make_ac4mpc_planner(self):
+        """The AC4MPC solver from the ``ac4mpc_*`` parameters; ``ac4mpc_policy`` (the exported TorchScript) is required."""
+        from controller.mpc.mpc_controller import make_ac4mpc
+
+        def param(name, default):
+            return self.get_parameter_or(name, Parameter(name, value=default)).value
+
+        policy = param('ac4mpc_policy', '')
+        if not policy:
+            raise ValueError("parameter 'ac4mpc_policy' (the TorchScript policy from export_policy.py) is required in "
+                             "AC4MPC mode")
+        planner = make_ac4mpc(
+            policy, mode=param('ac4mpc_mode', 'full'), value_weight=param('ac4mpc_value_weight', 0.2),
+            reinit_period=param('ac4mpc_reinit_period', 5), eval_correction=param('ac4mpc_eval_correction', 0.0),
+            eval_rollout=param('ac4mpc_eval_rollout', 0), threads=param('ac4mpc_threads', True),
+            torch_threads=param('ac4mpc_torch_threads', 1))
+        self.get_logger().info(f"AC4MPC {param('ac4mpc_mode', 'full')} with {policy}")
+        return planner
+
+    def init_mpc_controller(self, ac4mpc=False):
         from controller.mpc.mpc_controller import MPC_Controller
 
         direction = self.get_parameter_or('direction', Parameter('direction', value='ccw')).value
         self.rl_max_odom_age = self.get_parameter_or('max_odom_age_s', Parameter('max_odom_age_s', value=0.1)).value
-        self.mpc_controller = MPC_Controller(direction, self.get_logger())
+        self.mpc_controller = MPC_Controller(direction, self.get_logger(),
+                                             planner=self.make_ac4mpc_planner() if ac4mpc else None)
         # The state the MPC receives is older than the moment its command starts to act: the estimator's lag (measured
         # 6 to 15 ms), the message's age when the cycle starts (measured, from its stamp) and the solve. Moving the state
         # forward by that removed the last crashes in the sim and raised the progress by 10 % (docs/track_clearance.md).
@@ -838,7 +858,8 @@ class Controller(Node):
         text.pose.position.x, text.pose.position.y, text.pose.position.z = float(x), float(y), 0.6
         text.text = (f"v {vx:.2f} -> {speed:.2f} m/s\nsteer {steer:+.3f} rad\n"
                      f"lateral {d.lateral_error:+.2f} m  odom {1e3 * self.odom_age:.0f} ms\n"
-                     f"solve {1e3 * d.mpc.stats['solve_seconds']:.1f} ms")
+                     f"solve {1e3 * d.mpc.stats['solve_seconds']:.1f} ms"
+                     + (f"  {d.mpc.stats['candidate']}" if 'candidate' in d.mpc.stats else ""))
         self.mpc_markers_pub.publish(MarkerArray(markers=[horizon, stages, state, text]))
 
     def create_pid_msg(self, should, actual, error, d_value, i_value, input):
@@ -867,7 +888,7 @@ class Controller(Node):
             if cmd is None:
                 return
             speed, steer = cmd
-        elif self.mode == "MPC":
+        elif self.mode in ("MPC", "AC4MPC"):
             cmd = self.mpc_cycle()
             if cmd is None:
                 return
