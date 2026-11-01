@@ -104,8 +104,8 @@ def read_bag(path):
             m = reader.deserialize(raw, conn.msgtype)
             kind = topics[conn.topic]
             if kind == 'imu':
-                rows[kind].append((stamp(m), yaw_of(m.orientation), m.angular_velocity.z,
-                                   m.linear_acceleration.x, m.linear_acceleration.y))
+                w, a = m.angular_velocity, m.linear_acceleration
+                rows[kind].append((stamp(m), yaw_of(m.orientation), w.x, w.y, w.z, a.x, a.y, a.z))
             elif kind == 'cmd':
                 rows[kind].append((stamp(m), m.drive.speed, m.drive.steering_angle))
             elif kind == 'odom':  # PoseStamped
@@ -120,6 +120,18 @@ def read_bag(path):
     out = {'imu': rows['imu'], 'cmd': rows['cmd'], 'vesc': rows['vesc'], 'pose': rows['pose'],
            'odom': rows['odom'] or rows['odom_old'], 'live': rows['live'] or rows['live_old']}
     return {k: np.array(sorted(v)) for k, v in out.items()}
+
+
+def imu_in_base_link(raw):
+    """``(stamp, yaw, wz, ax, ay)`` in base_link from the raw rows ``(stamp, yaw, wx, wy, wz, ax, ay, az)``.
+
+    The car's static IMU rotation (``defaults.IMU_ROTATION``, tilt included) is applied to the angular velocity and the
+    acceleration, as ``imu_transformer`` does for the node; the heading is a change since the first sample, so its mounting
+    offset does not matter.
+    """
+    rotation = np.asarray(defaults.IMU_ROTATION, dtype=float)
+    w, a = raw[:, 2:5] @ rotation.T, raw[:, 5:8] @ rotation.T
+    return np.column_stack([raw[:, 0], raw[:, 1], w[:, 2], a[:, 0], a[:, 1]])
 
 
 def reference_velocity(odom, half_window=0.1):
@@ -166,7 +178,7 @@ def replay(bag, config=None, engine=None, reference_window=0.1):
     history = PredictionHistory(config.accel_lag)
     delay = CommandDelay(config.steer_delay)
     speed_delay = CommandDelay(config.speed_delay)
-    imu, cmd, odom = bag['imu'], bag['cmd'], bag['odom']
+    imu, cmd, odom = imu_in_base_link(bag['imu']), bag['cmd'], bag['odom']
     vesc = bag['vesc'] if len(bag['vesc']) else odom  # raw VESC odometry, else the old EKF's twist
     t0 = max(imu[0, 0], cmd[0, 0], odom[0, 0], vesc[0, 0])
     t1 = min(imu[-1, 0], cmd[-1, 0], odom[-1, 0], vesc[-1, 0])
@@ -199,8 +211,7 @@ def replay(bag, config=None, engine=None, reference_window=0.1):
             i_cmd += 1
         while i_imu < len(imu) and imu[i_imu, 0] <= t:
             _, yaw, wz, ax, ay = imu[i_imu]
-            # imu_transformer: the IMU frame is base_link rotated by 90 degrees about z.
-            a = np.array([-ay, ax]) - config.accel_bias
+            a = np.array([ax, ay]) - config.accel_bias
             imu_z = np.array([wrap(yaw - yaw0), wz, *a])
             i_imu += 1
             imu_fresh = True

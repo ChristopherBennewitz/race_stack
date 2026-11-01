@@ -61,6 +61,14 @@ node and the replay both start from. `--evaluate-only` reports the current defau
 accelerometer bias. The sysid bags' SLAM pose came from the live estimator's odometry, so the velocity reference is
 not independent of it. Parameters that end up on the search bound are not determined by the data.
 
+The offline tools start from NUC2's model by default. For another car set `EKF_CAR_CONFIG_DIR` to its
+`stack_master/config/<CAR>` directory: its `ekf.yaml` then overrides the model and noise defaults, and the IMU mounting
+angle comes from its `static_transforms.yaml` (NUC2's IMU is mounted at +90 degrees, NUC7's at -90):
+
+```
+EKF_CAR_CONFIG_DIR=stack_master/config/NUC7 f1tenth_parallel_sim/.venv/bin/python state_estimation/misc/ekf_tune.py ...
+```
+
 ### Per-car parameters of the simulator-model EKF
 
 `defaults.py` holds the NUC2 fit. Each car overrides what it has fitted in `stack_master/config/<car>/ekf.yaml` (the

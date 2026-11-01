@@ -35,7 +35,9 @@ controller tick waits for the EKF's next 100 Hz message: position 15 ms, velocit
 | MPC solve (references + solver), after the QP change | 6.3 ms | 8 ms |
 | `/car_state/pose` stamp age | 8.2 ms | 23.7 ms |
 
-State to applied command is about 18 ms on average. The MPC does not compensate for it; an RL policy sees it as the
+State to applied command is about 18 ms on average. The MPC moves the state it plans from forward by the estimator lag
+(12 ms), the message age (measured from the stamp) and the compute lag (the smoothed solve time plus 1.2 ms, 7.5 ms at the
+usual 6.3 ms solve; `controller_manager.mpc_cycle`), assuming constant velocity. An RL policy sees the lag as the
 observation delay above. See `progress_mpc/docs/solve_time.md` for how the solve time went from 26 ms to 6 ms.
 
 ## Plant (command to car)

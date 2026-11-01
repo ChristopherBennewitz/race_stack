@@ -14,7 +14,7 @@ from __future__ import annotations
 import casadi as ca
 import numpy as np
 
-from ekf_replay import HZ, WARMUP, FilterConfig, wrap
+from ekf_replay import HZ, WARMUP, FilterConfig, imu_in_base_link, wrap
 from state_estimation.ekf_node import defaults
 from state_estimation.ekf_node.models import CommandDelay
 
@@ -170,7 +170,7 @@ def prepare(bag, config: FilterConfig):
     Mirrors the loop in ``ekf_replay.replay`` (commands and sensors are sample-and-hold, the first tick only
     collects, a sensor sample is fresh until the tick that consumes it).
     """
-    imu, cmd, odom = bag['imu'], bag['cmd'], bag['odom']
+    imu, cmd, odom = imu_in_base_link(bag['imu']), bag['cmd'], bag['odom']
     vesc = bag['vesc'] if len(bag['vesc']) else odom
     t0 = max(imu[0, 0], cmd[0, 0], odom[0, 0], vesc[0, 0])
     t1 = min(imu[-1, 0], cmd[-1, 0], odom[-1, 0], vesc[-1, 0])
@@ -190,7 +190,7 @@ def prepare(bag, config: FilterConfig):
             i_cmd += 1
         while i_imu < len(imu) and imu[i_imu, 0] <= t:
             _, yaw, wz, ax, ay = imu[i_imu]
-            imu_z = np.array([wrap(yaw - yaw0), wz, -ay, ax])  # the bias is subtracted inside the filter
+            imu_z = np.array([wrap(yaw - yaw0), wz, ax, ay])  # in base_link; the bias is subtracted inside the filter
             i_imu += 1
             imu_fresh = True
         vesc_z = None

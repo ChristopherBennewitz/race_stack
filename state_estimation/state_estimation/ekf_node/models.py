@@ -339,6 +339,9 @@ GRAVITY = 9.81
 STATE_DIM = 7
 
 
+MIN_BRAKE_LIMIT = 0.1  # floor of the braking cap, m/s^2: a steep taper cannot reverse the effort (f1tenth_sim.actuators)
+
+
 @dataclass(frozen=True)
 class VehicleModelParams:
     """Nominal vehicle and tire parameters used by the simulator model."""
@@ -367,6 +370,8 @@ class VehicleModelParams:
     speed_delay: float = 0.0
     drive_gain: float = 3.0
     brake_gain: float = 5.0
+    brake_limit: float = 1000.0  # braking effort cap at standstill, m/s^2 (1000: no cap)
+    brake_taper: float = 0.0  # the cap falls by this per unit speed, 1/s
     imu_x: float = 0.07  # IMU ahead of base_link (the rear axle), the base_link -> imu static transform
 
     @property
@@ -436,7 +441,7 @@ class SimulatorSingleTrackModel:
     to a road-wheel target that the wheel follows through a first-order lag
     ``steer_latency``, and the drive effort per unit mass is a proportional
     speed loop ``gain * (speed_command - vx)`` with separate drive/brake
-    gains, the speed command delayed by ``speed_delay``. The delays are not in the graph: ``u`` holds the
+    gains, the braking effort capped at ``brake_limit - brake_taper * |vx|``, the speed command delayed by ``speed_delay``. The delays are not in the graph: ``u`` holds the
     commands *as delayed by the caller* (see :class:`CommandDelay`), which is exact
     because the command is a known input. The command rate/range limits
     live in the actuation limiter, not here.
@@ -476,7 +481,10 @@ class SimulatorSingleTrackModel:
         # `accel` is drive effort per unit mass (a force request, F = m * accel), not physical acceleration.
         steer_target = p.steer_gain * steer_cmd + p.steer_bias
         steer_rate = (steer_target - steer) * inv_tau
-        accel = ca.if_else(vel_cmd**2 > vx**2, p.drive_gain, p.brake_gain) * (vel_cmd - vx)
+        speeding_up = vel_cmd**2 > vx**2
+        effort = ca.if_else(speeding_up, p.drive_gain, p.brake_gain) * (vel_cmd - vx)
+        brake_cap = ca.fmax(p.brake_limit - p.brake_taper * ca.fabs(vx), MIN_BRAKE_LIMIT)
+        accel = ca.if_else(speeding_up, effort, ca.fmax(ca.fmin(effort, brake_cap), -brake_cap))
 
         # Lateral tire forces (simulator sign conventions).
         sin_steer, cos_steer = ca.sin(steer), ca.cos(steer)

@@ -3,6 +3,10 @@
 Names are the node's ``sim_*`` parameters without the prefix. ROS-free on purpose, so the replay and the tuner
 can use exactly what the node runs with.
 """
+import math
+import os
+from pathlib import Path
+
 from .models import VehicleModelParams
 
 # Actuator model, fitted by the simulator's sysid (runs/sysid/fit/20261024-110517): the steering command is
@@ -14,6 +18,7 @@ MODEL = {
     'steer_delay': 0.0458081, 'steer_latency': 0.0441209,
     'speed_delay': 0.0101888,
     'drive_gain': 9.18827, 'brake_gain': 6.51316,
+    'brake_limit': 1000.0, 'brake_taper': 0.0,
     'front_drive_frac': 0.5, 'constraint_time_constant': 0.03,
     'blend_center': 0.6, 'slip_speed_regularizer': 0.1,
     'mass': 3.718, 'yaw_inertia': 0.0561,
@@ -83,4 +88,56 @@ def vehicle_model_params(get=MODEL.__getitem__):
         blend_center=get('blend_center'), slip_speed_regularizer=get('slip_speed_regularizer'),
         steer_gain=get('steer_gain'), steer_bias=get('steer_bias'),
         steer_delay=get('steer_delay'), steer_latency=get('steer_latency'), speed_delay=get('speed_delay'),
-        drive_gain=get('drive_gain'), brake_gain=get('brake_gain'), imu_x=get('imu_x'))
+        drive_gain=get('drive_gain'), brake_gain=get('brake_gain'),
+        brake_limit=get('brake_limit'), brake_taper=get('brake_taper'), imu_x=get('imu_x'))
+
+
+# Rotation of the IMU frame in base_link (R, so that v_base = R @ v_imu), from the car's static_transforms.yaml: NUC2 mounts the IMU
+# at +90 degrees about z. The node gets it from the TF tree through imu_transformer; the offline tools (misc/ekf_replay.py)
+# rotate the raw angular velocity and acceleration by it. A car with a tilt in its quaternion (NUC7: 1.6 degrees, so that
+# gravity reads on z only) needs all three rows: with the yaw alone the resting accelerometer reads 0.3 m/s^2 in ax and ay.
+IMU_ROTATION = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+
+
+def _rotation_from_quaternion(qx, qy, qz, qw):
+    return [[1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+            [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+            [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)]]
+
+
+def _rotation_from_rpy(roll, pitch, yaw):
+    cr, sr, cp, sp, cy, sy = math.cos(roll), math.sin(roll), math.cos(pitch), math.sin(pitch), math.cos(yaw), math.sin(yaw)
+    return [[cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr]]
+
+
+def apply_car_config(config_dir):
+    """Overrides MODEL and NOISE with a car's ``ekf.yaml`` and IMU_ROTATION with its ``static_transforms.yaml``.
+
+    ``config_dir`` is a ``stack_master/config/<CAR>`` directory. For the offline tools, which have no ROS parameter
+    server; set ``EKF_CAR_CONFIG_DIR`` to apply it when this module is imported (worker processes inherit it).
+    """
+    import yaml
+
+    global IMU_ROTATION
+    config_dir = Path(config_dir)
+    if (config_dir / 'ekf.yaml').exists():
+        params = yaml.safe_load((config_dir / 'ekf.yaml').read_text())['/**']['ros__parameters']
+        for key, value in params.items():
+            name = key[len('sim_'):] if key.startswith('sim_') else key
+            target = MODEL if name in MODEL else NOISE if name in NOISE else None
+            if target is None:
+                raise KeyError(f'{config_dir / "ekf.yaml"}: {key} is not a MODEL or NOISE entry')
+            target[name] = value
+    if (config_dir / 'static_transforms.yaml').exists():
+        for transform in yaml.safe_load((config_dir / 'static_transforms.yaml').read_text())['transforms']:
+            if transform['child'] == 'imu':
+                if 'quat' in transform:
+                    IMU_ROTATION = _rotation_from_quaternion(*transform['quat'])
+                else:
+                    IMU_ROTATION = _rotation_from_rpy(*transform['rpy'])
+
+
+if os.environ.get('EKF_CAR_CONFIG_DIR'):
+    apply_car_config(os.environ['EKF_CAR_CONFIG_DIR'])

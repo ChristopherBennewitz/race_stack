@@ -96,7 +96,7 @@ def parse_constraints(fix, floor, names=PARAMETERS, nominal=None):
 def load_bag(path, cache_dir):
     """One bag's replay inputs and reference velocity, parsed once and cached next to its modification time."""
     path = Path(path)
-    cache = Path(cache_dir) / f'{path.name}.{int(path.stat().st_mtime)}.npz'
+    cache = Path(cache_dir) / f'{path.name}.{int(path.stat().st_mtime)}.v2.npz'  # v2: raw 3D IMU rows (8 columns)
     keys = ('imu', 'cmd', 'odom', 'vesc', 'live')
     if cache.exists():
         with np.load(cache) as z:

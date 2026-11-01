@@ -30,7 +30,7 @@ def straight_drive_bag(seconds=8.0, speed=1.5):
     bias = defaults.NOISE['imu_accel_bias']
     zeros = np.zeros_like(t)
     # The IMU frame is base_link rotated by 90 degrees: zero acceleration plus the bias the replay removes.
-    imu = np.column_stack([t, zeros, zeros, np.full_like(t, bias[1]), np.full_like(t, -bias[0])])
+    imu = np.column_stack([t, zeros, zeros, zeros, zeros, np.full_like(t, bias[1]), np.full_like(t, -bias[0]), zeros])
     cmd = np.column_stack([t, np.full_like(t, speed), np.zeros_like(t)])
     vesc = np.column_stack([t, np.zeros_like(t), np.zeros_like(t), np.zeros_like(t),
                             np.full_like(t, speed), np.zeros_like(t), np.zeros_like(t)])
@@ -72,8 +72,10 @@ def maneuvering_bag(seconds=12.0, seed=1):
     speed = 1.5 + 1.0 * np.sin(0.7 * t)
     steer = 0.2 * np.sin(1.3 * t)
     bias = defaults.NOISE['imu_accel_bias']
-    imu = np.column_stack([t, 0.3 * np.sin(t) + 0.01 * rng.normal(size=t.size), 0.8 * steer + 0.03 * rng.normal(size=t.size),
-                           1.0 * rng.normal(size=t.size) + bias[1], 1.0 * rng.normal(size=t.size) - bias[0]])
+    zeros = np.zeros_like(t)
+    imu = np.column_stack([t, 0.3 * np.sin(t) + 0.01 * rng.normal(size=t.size), zeros, zeros,
+                           0.8 * steer + 0.03 * rng.normal(size=t.size),
+                           1.0 * rng.normal(size=t.size) + bias[1], 1.0 * rng.normal(size=t.size) - bias[0], zeros])
     tc = np.arange(0.0, seconds, 0.01)
     cmd = np.column_stack([tc, np.interp(tc, t, speed), np.interp(tc, t, steer)])
     vesc = np.column_stack([t, np.zeros_like(t), np.zeros_like(t), np.zeros_like(t), speed + 0.1 * rng.normal(size=t.size),
