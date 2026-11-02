@@ -75,17 +75,6 @@ a = k\,(v_{\mathrm{cmd}} - v_x), \qquad
 k = \begin{cases} k_d & v_{\mathrm{cmd}}^2 > v_x^2 \\ k_b & \text{otherwise}\end{cases}
 $$
 
-While braking ($|v_{\mathrm{cmd}}| \le |v_x|$) the effort is capped, because the car brakes much less hard at speed than the
-speed loop alone would ask for ($c_0$ = `brake_limit`, $c_1$ = `brake_taper`, the floor is $0.1\,\mathrm{m/s^2}$):
-
-$$
-a \leftarrow \operatorname{clip}\bigl(a,\; -c,\; c\bigr), \qquad
-c = \max\bigl(c_0 - c_1\,|v_x|,\; 0.1\bigr)
-$$
-
-The defaults (`brake_limit` 1000, `brake_taper` 0) switch the cap off. NUC7's `ekf.yaml` calibrates it on the stopping
-distance of braking events (`f1tenth_parallel_sim/configs/sysid_nuc7.toml`).
-
 **Tire slip angles**, regularized against the low-speed singularity:
 
 $$

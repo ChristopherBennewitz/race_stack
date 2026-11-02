@@ -18,7 +18,6 @@ MODEL = {
     'steer_delay': 0.0458081, 'steer_latency': 0.0441209,
     'speed_delay': 0.0101888,
     'drive_gain': 9.18827, 'brake_gain': 6.51316,
-    'brake_limit': 1000.0, 'brake_taper': 0.0,
     'front_drive_frac': 0.5, 'constraint_time_constant': 0.03,
     'blend_center': 0.6, 'slip_speed_regularizer': 0.1,
     'mass': 3.718, 'yaw_inertia': 0.0561,
@@ -89,7 +88,7 @@ def vehicle_model_params(get=MODEL.__getitem__):
         steer_gain=get('steer_gain'), steer_bias=get('steer_bias'),
         steer_delay=get('steer_delay'), steer_latency=get('steer_latency'), speed_delay=get('speed_delay'),
         drive_gain=get('drive_gain'), brake_gain=get('brake_gain'),
-        brake_limit=get('brake_limit'), brake_taper=get('brake_taper'), imu_x=get('imu_x'))
+        imu_x=get('imu_x'))
 
 
 # Rotation of the IMU frame in base_link (R, so that v_base = R @ v_imu), from the car's static_transforms.yaml: NUC2 mounts the IMU

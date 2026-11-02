@@ -1,7 +1,7 @@
 # Simulator-model EKF of NUC7 (python ekf_node, model_type simulator_single_track_model).
 # Only the entries listed here override the defaults in state_estimation/ekf_node/defaults.py, and those defaults are the
-# NUC2 fit. The vehicle and actuator model below is the NUC7 fit of f1tenth_parallel_sim (configs/sysid_nuc7.toml, run
-# runs/sysid/nuc7/20261101-143126, six sysid takes of 2026-10-30); the noise terms are NUC2's (tuning on the NUC7 takes did not generalize, see the end).
+# NUC2 fit. The vehicle and actuator model below is the NUC7 fit of f1tenth_parallel_sim (configs/sysid_nuc7.toml, tire shape
+# factor C pinned at 1.0, B and D fitted, run 20261102-130236, the sysid takes of 2026-10-30); the noise terms are NUC2's (tuning on the NUC7 takes did not generalize, see the end).
 # Values must keep a decimal point (ROS reads 4 as an integer and rejects it for a double parameter).
 /**:
   ros__parameters:
@@ -17,27 +17,23 @@
     sim_rear_axle_distance: 0.125
 
     # --- fitted on the NUC7 sysid takes ---
-    # CoG height: fitted (0.0668 +- 0.0055 m), the 0.03 m of the first NUC7 sheet did not fit. It is degenerate with the
+    # CoG height: fitted (0.0614 +- 0.0040 m), the 0.03 m of the first NUC7 sheet did not fit. It is degenerate with the
     # front/rear drive split (kept at an even 0.5), so read it as the combined load-transfer effect.
-    sim_cg_height: 0.0668347
-    sim_steer_gain: 1.15778
-    sim_steer_bias: 0.000153417
-    sim_steer_delay: 0.0374209
-    sim_steer_latency: 0.0267954
+    sim_cg_height: 0.0613698
+    sim_steer_gain: 1.13874
+    sim_steer_bias: 0.000116411
+    sim_steer_delay: 0.0360396
+    sim_steer_latency: 0.0366749
     sim_speed_delay: 0.0
-    sim_drive_gain: 7.61733
-    sim_brake_gain: 9.62281
-    # Braking effort cap, brake_limit - brake_taper * speed (m/s^2): the car brakes much less hard at speed than the speed
-    # loop alone would. Calibrated on the stopping distance of 62 braking events from >= 3 m/s, held at 5.0 and 0.7.
-    sim_brake_limit: 5.0
-    sim_brake_taper: 0.7
-    sim_front_B: 18.5003
-    sim_front_C: 1.00061
-    sim_front_D: 0.453171
+    sim_drive_gain: 8.03224
+    sim_brake_gain: 7.08783
+    sim_front_B: 33.7208
+    sim_front_C: 1.0
+    sim_front_D: 0.462155
     sim_front_E: 0.0
-    sim_rear_B: 3.22323
-    sim_rear_C: 1.89999
-    sim_rear_D: 0.732652
+    sim_rear_B: 10.3116
+    sim_rear_C: 1.0
+    sim_rear_D: 0.701309
     sim_rear_E: 0.0
     # sim_front_drive_frac, sim_constraint_time_constant, sim_blend_center, sim_slip_speed_regularizer keep the defaults
     # (0.5, 0.03, 0.6, 0.1), as in the fit.
@@ -48,15 +44,16 @@
     # measurement model; it does not smooth the filter's output.)
     sim_imu_accel_lag: 0.0
 
-    # --- noise model: NUC2's values (the defaults), kept on purpose ---
-    # With the lag above and the IMU rotated by the full static_transforms.yaml quaternion (tilt included), the NUC2 noise
-    # is well calibrated on the NUC7 takes (held-out likelihood 1.834 per sample, IMU NIS 3.6 against 4 on the fast take 6).
-    # misc/ekf_tune.py (EKF_CAR_CONFIG_DIR=stack_master/config/NUC7) raises the training likelihood (1.315 -> 1.011) but not
-    # the held-out takes (1.834 -> 1.880), makes the sideways velocity worse (0.229 -> 0.239 m/s) and take 6 over-confident
-    # (IMU NIS 6.7). Its R_imu[ax], R_imu[ay] shrink to ~0.4-0.6x and Q[yaw] runs to its bound. The accelerometer noise grows
-    # with speed, which one constant cannot follow, so NUC2's stays until there are more takes at varied speed.
+    # --- noise model: tuned on the NUC7 takes (misc/ekf_tune.py) ---
+    # misc/ekf_tune.py (EKF_CAR_CONFIG_DIR=stack_master/config/NUC7, takes 4 and 6 held out, R_vesc[vx], R_imu[yaw] and
+    # R_imu[yaw_rate] fixed at their defaults) against NUC2's noise (the defaults), with the vehicle model above:
+    # training likelihood 1.306 -> 0.911 per sample, held-out takes 1.758 -> 1.687. The tuned noise is used in spite of
+    # a weak held-out gain: the held-out forward and sideways velocity get worse (vx 0.242 -> 0.254, vy 0.255 -> 0.270 m/s)
+    # and the IMU NIS of the fast take 6 rises from 2.9 to 5.7 (target 4), so the filter is over-confident there. Q[yaw] sits on
+    # its lower bound and R_imu[ax], R_imu[ay] are 0.23x the defaults. The accelerometer noise grows with speed, which one
+    # constant cannot follow; revisit with more takes at varied speed. To go back to NUC2's noise, delete the three entries below.
     # The resting accelerometer mean over the seven takes, after the quaternion, is [+0.049, -0.004] m/s^2 (spread between
     # takes 0.05), within the noise of sim_imu_accel_bias above, so that is left as measured.
-    # sim_R_imu:
-    # sim_R_vesc:
-    # sim_Q:
+    sim_R_imu: [0.1, 0.0009, 0.3156, 0.4914]
+    sim_R_vesc: [1000000.0, 1000000.0, 1000000.0, 0.0225, 100.0, 1.311]
+    sim_Q: [0.0006241, 0.00000333, 0.00004352, 0.08194, 0.03153, 0.4669, 0.01102]
