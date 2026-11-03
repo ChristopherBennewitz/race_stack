@@ -2,6 +2,7 @@
     <arg name="racecar_version" default="$(env RACECAR_VERSION)" />
     <arg name="LU_table" default="NUC2_hangar_pacejka" />
     <arg name="ctrl_algo" default="MAP" />
+    <arg name="record_bag" default="False" description="True to record a rosbag of the controller topics (see controller README)" />
     <arg name="measure" default="False" />
     <arg name="sim_opp" default="False" description="True to run the time trials stack as the simulated opponent (remaps topics to the opponent ones)" />
     <arg name="raceline" default="mincurv" description="'mincurv' / 'shortest_path' / 'centerline'" />
@@ -19,6 +20,7 @@
         <arg name="mode" value="$(var ctrl_algo)" />
         <arg name="LU_table" value="$(var LU_table)" />
         <arg name="sim_opp" value="$(var sim_opp)" />
+        <arg name="record_bag" value="$(var record_bag)" />
     </include>
 
     <!-- launch state machine -->

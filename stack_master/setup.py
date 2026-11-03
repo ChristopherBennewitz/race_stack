@@ -26,6 +26,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
         (os.path.join('share', package_name, 'launch', 'subsystems'), glob(os.path.join('launch', 'subsystems', '*launch.[pxy][yma]*'))),
+        (os.path.join('share', package_name, 'viz'), glob('viz/*.rviz')),
         *config_subfolders,
         *map_subfolders,
     ],

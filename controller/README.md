@@ -217,6 +217,23 @@ EKF state in the map frame and returns a speed and a steering angle for the actu
   stands for the car, default the MPC's clearance less its 0.1 m margin), `mpc_recovery_speed_mps` (0.4), `mpc_recovery_clearance_m` (0.06).
   Lost odometry cancels it. `/controller/diagnostics` reports `recovering`, `recoveries` and `recovery_failures`.
 
+## Recording a bag (MPC, AC4MPC, RL)
+
+`record_bag:=True` starts `ros2 bag record` next to the controller, to evaluate the model's accuracy and the latency handling, or to
+collect data for fitting the model:
+
+```bash
+ros2 launch controller controller_launch.xml mode:=MPC record_bag:=True            # or via stack_master's time_trials_launch.xml
+```
+
+- Written to `bag_dir` (default `~/sysid_bags`) as `bag_name` (default `<mode>_<timestamp>`, built by a shell).
+- `bag_topics` is the list sysid and the latency tools read (`state_estimation/docs/measured_latencies.md`): `/tf`, `/tf_static`, the
+  VESC `/sensors/core`, IMU, `/odom`, the state estimates (`/state_estimation/odom`, `odom_map`, `odom_map_jumps`, diagnostics),
+  `/drive`, `/ackermann_cmd_applied`, `/commands/servo/position`, `/commands/motor/speed`, `/controller/diagnostics` (solve time and the
+  plan's one-step prediction error), `/controller/mpc/markers`, and the centerline / global waypoints. `/scan` is left out (large): add it
+  to `bag_topics` if needed.
+- Stand still for about 1 s at the start; the speed offset is calibrated from it.
+
 # AC4MPC controller
 
 The controller manager's `AC4MPC` mode (`mode:=AC4MPC`) is the `MPC` mode with the actor- and critic-guided planner of `progress_mpc`

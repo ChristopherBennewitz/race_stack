@@ -13,6 +13,10 @@
   <arg name="direction" default="ccw" description="RL / MPC / AC4MPC modes only: 'ccw' / 'cw', the driving direction (the RL policy was trained for one)"/>
   <arg name="odom_topic" default="/state_estimation/odom" description="RL / MPC / AC4MPC modes only: the state estimate, in any frame. /state_estimation/odom_map is the smooth map-frame one (local odometry plus the corrected map-&gt;odom, from state_estimation's map_odom_node; the simulator does not publish it)"/>
   <arg name="sim_opp" default="False" description="True to remap topics to the simulated opponent ones" />
+  <arg name="record_bag" default="False" description="True to record a rosbag next to the controller (RL / MPC / AC4MPC: model accuracy, latencies, sysid data)" />
+  <arg name="bag_dir" default="$(env HOME)/sysid_bags" description="Directory the bag folder is created in" />
+  <arg name="bag_name" default="" description="Bag folder name; empty gives the mode and a timestamp" />
+  <arg name="bag_topics" default="/tf /tf_static /sensors/core /sensors/imu/raw /imu /odom /car_state/pose /state_estimation/odom /state_estimation/odom_map /state_estimation/odom_map_jumps /state_estimation/diagnostics /ackermann_cmd_applied /drive /commands/servo/position /commands/motor/speed /centerline_waypoints /global_waypoints /controller/diagnostics /controller/mpc/markers" description="Space separated topics to record; append /scan if the lidar is wanted (large)" />
 
   <!--  launch L1 controller -->
   <group>
@@ -39,5 +43,14 @@
         <param name="odom_topic" value="$(var odom_topic)"/>
     </node>
   </group>
+
+  <!-- Bag for model-accuracy / latency evaluation and sysid fitting. The topics are the ones sysid and the latency
+       tools read (state_estimation/docs/measured_latencies.md). Topics that do not exist (e.g. in the simulator) are
+       simply waited for. Stand still for 1 s after starting: the speed offset is calibrated from it. -->
+  <!-- bash only to build the timestamp. The snippet goes in through an env var because launch splits `cmd` into words and
+       a quote cannot span substitutions; `exec` so the shutdown signal reaches ros2 bag. -->
+  <executable cmd="bash -c 'eval $BAG_CMD'" output="screen" if="$(var record_bag)">
+    <env name="BAG_CMD" value="n=$(var bag_name); n=${n:-$(var mode)_`date +%Y%m%d_%H%M%S`}; exec ros2 bag record -o $(var bag_dir)/$n $(var bag_topics)" />
+  </executable>
 
 </launch>
