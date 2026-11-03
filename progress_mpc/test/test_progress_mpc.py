@@ -87,8 +87,9 @@ def test_drives_forward_inside_the_track_and_the_command_limits(mpc):
 def test_commands_respect_the_per_period_rate_limits(mpc):
     commands, _, _ = drive(mpc, 80)
     steps = np.abs(np.diff(commands, axis=0))
-    assert steps[:, 0].max() <= 0.06 + 1e-6  # 3 rad/s over the manager's two 10 ms ticks per 25 ms period
-    assert steps[:, 1].max() <= 0.10 + 1e-6  # 5 m/s^2 likewise
+    steer_step, speed_up, speed_down = mpc.step_limits  # the manager's rates over its ticks in a control period
+    assert steps[:, 0].max() <= steer_step + 1e-6
+    assert steps[:, 1].max() <= max(speed_up, speed_down) + 1e-6
 
 
 def test_a_plan_spans_the_horizon(mpc):

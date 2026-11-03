@@ -98,6 +98,7 @@ PYBIND11_MODULE(_core, m) {
       .def_property_readonly("control_dt", &ProgressMpc::control_dt)
       .def_property_readonly("history_length", &ProgressMpc::history_length)
       .def_property_readonly("speed_max", &ProgressMpc::speed_max)
+      .def_property_readonly("step_limits", &ProgressMpc::step_limits)
       .def_property_readonly("steer_max", &ProgressMpc::steer_max)
       .def_property_readonly("clearance_margin", &ProgressMpc::clearance_margin)
       .def_property_readonly("cog_offset", &ProgressMpc::cog_offset);

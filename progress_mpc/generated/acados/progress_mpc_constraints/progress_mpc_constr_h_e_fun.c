@@ -53,12 +53,12 @@ extern "C" {
 
 casadi_real casadi_sq(casadi_real x) { return x*x;}
 
-static const casadi_int casadi_s0[3] = {11, 1, 1};
+static const casadi_int casadi_s0[3] = {13, 1, 1};
 static const casadi_int casadi_s1[3] = {0, 0, 1};
 static const casadi_int casadi_s2[3] = {7, 1, 1};
 static const casadi_int casadi_s3[3] = {4, 1, 1};
 
-/* progress_mpc_constr_h_e_fun:(i0[11],i1[],i2[],i3[7])->(o0[4]) */
+/* progress_mpc_constr_h_e_fun:(i0[13],i1[],i2[],i3[7])->(o0[4]) */
 static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem) {
   casadi_real a00, a01, a02, a03, a04, a05, a06, a07, a08, a09, a10;
   a00=arg[3]? arg[3][2] : 0;
@@ -72,7 +72,7 @@ static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw,
   a04=(a04-a05);
   a05=(a03*a04);
   a02=(a02-a05);
-  a05=6.1658339157083231e-01;
+  a05=4.9557169789805211e-01;
   a06=arg[0]? arg[0][3] : 0;
   a06=casadi_sq(a06);
   a07=2.;
@@ -96,7 +96,7 @@ static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw,
   a05=(a05*a07);
   a02=(a02+a05);
   a05=arg[3]? arg[3][5] : 0;
-  a07=3.8400000000000001e-01;
+  a07=3.1250000000000000e-01;
   a05=(a05-a07);
   a05=(a02-a05);
   if (res[0]!=0) res[0][0]=a05;

@@ -129,4 +129,24 @@ inline int project(const Track& track, const double* positions, int stride, int 
   return first;
 }
 
+// The OCP state's three additions to the model state at stage `k` of a plan (`ProgressMPC._augmented_columns`): the
+// last speed command, then the previous steering and speed command (the one before the last). `applied` is the
+// steering history, the speed history, then the (steer, speed) command applied before the last one; the commands
+// before the plan are the applied ones, then the plan's own.
+constexpr int kAugExtra = 3;
+
+inline void augmented_extras(const double* applied, int n_steer, int n_history, const double* controls, int k,
+                             double* out) {
+  const double last[2] = {applied[0], applied[n_steer]};
+  const double* before = applied + n_history;
+  auto issued = [&](int i, int channel) {  // command `i` of the sequence (before, last, controls...)
+    if (i == 0) return before[channel];
+    if (i == 1) return last[channel];
+    return controls[2 * (i - 2) + channel];
+  };
+  out[0] = issued(k + 1, 1);
+  out[1] = issued(k, 0);
+  out[2] = issued(k, 1);
+}
+
 }  // namespace progress_mpc

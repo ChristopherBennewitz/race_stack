@@ -242,7 +242,7 @@ static ocp_nlp_dims* progress_mpc_acados_create_setup_dimensions(progress_mpc_so
     nbx[0] = NBX0;
     nsbx[0] = 0;
     ns[0] = NS0;
-    nbxe[0] = 11;
+    nbxe[0] = 13;
     ny[0] = NY0;
     nh[0] = NH0;
     nsh[0] = NSH0;
@@ -616,6 +616,8 @@ void progress_mpc_acados_setup_nlp_in(progress_mpc_solver_capsule* capsule, cons
     idxbx0[8] = 8;
     idxbx0[9] = 9;
     idxbx0[10] = 10;
+    idxbx0[11] = 11;
+    idxbx0[12] = 12;
 
     double* lubx0 = calloc(2*NBX0, sizeof(double));
     double* lbx0 = lubx0;
@@ -628,7 +630,7 @@ void progress_mpc_acados_setup_nlp_in(progress_mpc_solver_capsule* capsule, cons
     free(idxbx0);
     free(lubx0);
     // idxbxe_0
-    int* idxbxe_0 = malloc(11 * sizeof(int));
+    int* idxbxe_0 = malloc(13 * sizeof(int));
     idxbxe_0[0] = 0;
     idxbxe_0[1] = 1;
     idxbxe_0[2] = 2;
@@ -640,6 +642,8 @@ void progress_mpc_acados_setup_nlp_in(progress_mpc_solver_capsule* capsule, cons
     idxbxe_0[8] = 8;
     idxbxe_0[9] = 9;
     idxbxe_0[10] = 10;
+    idxbxe_0[11] = 11;
+    idxbxe_0[12] = 12;
     ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, 0, "idxbxe", idxbxe_0);
     free(idxbxe_0);
 
@@ -649,9 +653,9 @@ void progress_mpc_acados_setup_nlp_in(progress_mpc_solver_capsule* capsule, cons
     double* luh_0 = calloc(2*NH0, sizeof(double));
     double* lh_0 = luh_0;
     double* uh_0 = luh_0 + NH0;
-    lh_0[0] = -0.06;
+    lh_0[0] = -0.08;
     lh_0[1] = -0.1;
-    uh_0[0] = 0.06;
+    uh_0[0] = 0.08;
     uh_0[1] = 0.1;
 
     ocp_nlp_constraints_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, 0, "nl_constr_h_fun_jac", &capsule->nl_constr_h_0_fun_jac);
@@ -677,7 +681,7 @@ void progress_mpc_acados_setup_nlp_in(progress_mpc_solver_capsule* capsule, cons
     double* ubu = lubu + NBU;
     lbu[0] = -0.3;
     ubu[0] = 0.3;
-    ubu[1] = 5;
+    ubu[1] = 8;
 
     for (int i = 0; i < N; i++)
     {
@@ -721,13 +725,13 @@ void progress_mpc_acados_setup_nlp_in(progress_mpc_solver_capsule* capsule, cons
     double* luh = calloc(2*NH, sizeof(double));
     double* lh = luh;
     double* uh = luh + NH;
-    lh[0] = -0.06;
+    lh[0] = -0.08;
     lh[1] = -0.1;
     lh[2] = -1000000000;
     lh[3] = -1000000000;
     lh[4] = -1000000000;
     lh[5] = -1000000000;
-    uh[0] = 0.06;
+    uh[0] = 0.08;
     uh[1] = 0.1;
 
     for (int i = 1; i < N; i++)

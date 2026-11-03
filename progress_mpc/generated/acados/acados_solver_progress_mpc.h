@@ -36,13 +36,13 @@
 #include "acados_c/ocp_nlp_interface.h"
 #include "acados_c/external_function_interface.h"
 
-#define PROGRESS_MPC_NX     11
+#define PROGRESS_MPC_NX     13
 #define PROGRESS_MPC_NZ     0
 #define PROGRESS_MPC_NU     2
 #define PROGRESS_MPC_NP     7
 #define PROGRESS_MPC_NP_GLOBAL     0
 #define PROGRESS_MPC_NBX    0
-#define PROGRESS_MPC_NBX0   11
+#define PROGRESS_MPC_NBX0   13
 #define PROGRESS_MPC_NBU    2
 #define PROGRESS_MPC_NSBX   0
 #define PROGRESS_MPC_NSBU   0

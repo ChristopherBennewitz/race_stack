@@ -58,20 +58,21 @@ extern "C" {
 
 casadi_real casadi_sq(casadi_real x) { return x*x;}
 
-static const casadi_int casadi_s0[3] = {11, 1, 1};
+static const casadi_int casadi_s0[3] = {13, 1, 1};
 static const casadi_int casadi_s1[3] = {2, 1, 1};
 static const casadi_int casadi_s2[3] = {0, 1, 1};
-static const casadi_int casadi_s3[3] = {29, 1, 1};
+static const casadi_int casadi_s3[3] = {33, 1, 1};
 static const casadi_int casadi_s4[3] = {1, 1, 1};
-static const casadi_int casadi_s5[3] = {13, 1, 1};
-static const casadi_int casadi_s6[24] = 
-  {13, 13, 0, 2, 4, 4, 4, 4,
+static const casadi_int casadi_s5[3] = {15, 1, 1};
+static const casadi_int casadi_s6[26] = 
+  {15, 15, 0, 2, 4, 4, 4, 4,
   4, 4, 4, 4, 6, 6, 6, 8,
-  0, 9, 1, 12, 0, 9, 1, 12};
+  8, 8, 0, 9, 1, 12, 0, 9,
+  1, 12};
 static const casadi_int casadi_s7[3] = {0, 0, 1};
-static const casadi_int casadi_s8[3] = {0, 13, 1};
+static const casadi_int casadi_s8[3] = {0, 15, 1};
 
-/* ac4mpc_critic_cost_ext_cost_fun_jac_hess:(i0[11],i1[2],i2[0],i3[29])->(o0,o1[13],o2[13x13,8nz],o3[],o4[0x13]) */
+/* ac4mpc_critic_cost_ext_cost_fun_jac_hess:(i0[13],i1[2],i2[0],i3[33])->(o0,o1[15],o2[15x15,8nz],o3[],o4[0x15]) */
 static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem) {
   casadi_real a0, a1, a2, a3, a4;
   a0=2.0000000000000000e-02;
@@ -107,16 +108,18 @@ static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw,
   if (res[1]!=0) res[1][11]=a3;
   a0=(-a0);
   if (res[1]!=0) res[1][12]=a0;
-  a0=4.0000000000000001e-02;
-  if (res[2]!=0) res[2][0]=a0;
-  a3=-4.0000000000000001e-02;
-  if (res[2]!=0) res[2][1]=a3;
-  if (res[2]!=0) res[2][2]=a0;
-  if (res[2]!=0) res[2][3]=a3;
-  if (res[2]!=0) res[2][4]=a3;
-  if (res[2]!=0) res[2][5]=a0;
-  if (res[2]!=0) res[2][6]=a3;
-  if (res[2]!=0) res[2][7]=a0;
+  if (res[1]!=0) res[1][13]=a3;
+  if (res[1]!=0) res[1][14]=a3;
+  a3=4.0000000000000001e-02;
+  if (res[2]!=0) res[2][0]=a3;
+  a0=-4.0000000000000001e-02;
+  if (res[2]!=0) res[2][1]=a0;
+  if (res[2]!=0) res[2][2]=a3;
+  if (res[2]!=0) res[2][3]=a0;
+  if (res[2]!=0) res[2][4]=a0;
+  if (res[2]!=0) res[2][5]=a3;
+  if (res[2]!=0) res[2][6]=a0;
+  if (res[2]!=0) res[2][7]=a3;
   return 0;
 }
 

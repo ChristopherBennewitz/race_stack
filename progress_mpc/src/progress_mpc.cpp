@@ -18,7 +18,7 @@ using namespace generated;
 
 constexpr int kStateDim = kVehicleDim + kHistory;  // vehicle state, then the steering and the speed history, newest first
 constexpr int kSpeedHistory = kHistory - kSteerHistory;
-constexpr int kAugDim = kStateDim + 1;             // the OCP state adds the last speed command
+constexpr int kAugDim = kStateDim + kAugExtra;     // the OCP state adds the last speed command and the two before it
 
 static_assert(kVehicleDim == kVehicleStateDim, "the generated model's vehicle state changed");
 static_assert(kAugDim == PROGRESS_MPC_NX, "the generated OCP does not match the exported step function");
@@ -80,7 +80,7 @@ struct ProgressMpc::Impl {
 
   bool have_warm = false;
   Plan warm;
-  Vec applied;  // steering history, then speed history (both newest first); empty before the first report
+  Vec applied;  // steering history, then speed history (both newest first), then the command before the last (steer, speed); empty before the first report
   int prev_idx = -1;
   double steer_estimate = 0.0;
   Stats stats;
@@ -108,8 +108,9 @@ struct ProgressMpc::Impl {
 
   Vec applied_or_rest(double vx) const {
     if (!applied.empty()) return applied;
-    Vec rest(kHistory, 0.0);
+    Vec rest(kHistory + 2, 0.0);
     rest[kSteerHistory] = vx;
+    rest[kHistory + 1] = vx;  // the command before the last: the same, so the first step is not penalized
     return rest;
   }
 
@@ -188,16 +189,16 @@ struct ProgressMpc::Impl {
   // One SQP-RTI iteration from the guess; true and the plan on success.
   bool solve(const Vec& x0, const Vec& ap, const Plan& guess, const Vec& refs, Plan& solution) {
     const int n = kHorizon;
-    Vec x0_aug(x0);
-    x0_aug.push_back(ap[kSteerHistory]);
+    Vec x0_aug(kAugDim);
+    std::copy(x0.begin(), x0.end(), x0_aug.begin());
+    augmented_extras(ap.data(), kSteerHistory, kHistory, guess.controls.data(), 0, &x0_aug[kStateDim]);
     ocp_nlp_constraints_model_set(config, dims, in, 0, "lbx", x0_aug.data());
     ocp_nlp_constraints_model_set(config, dims, in, 0, "ubx", x0_aug.data());
     Vec x_k(kAugDim);
     for (int k = 0; k <= n; ++k) {
       progress_mpc_acados_update_params(capsule, k, const_cast<double*>(&refs[k * kRefDim]), kRefDim);
       std::copy(&guess.states[k * kStateDim], &guess.states[(k + 1) * kStateDim], x_k.begin());
-      // The last speed command at stage k: the applied one, then the plan's own.
-      x_k[kStateDim] = (k == 0) ? ap[kSteerHistory] : guess.controls[2 * (k - 1) + 1];
+      augmented_extras(ap.data(), kSteerHistory, kHistory, guess.controls.data(), k, &x_k[kStateDim]);
       ocp_nlp_out_set(config, dims, out, k, "x", x_k.data());
       if (k < n) ocp_nlp_out_set(config, dims, out, k, "u", const_cast<double*>(&guess.controls[2 * k]));
     }
@@ -275,8 +276,9 @@ void ProgressMpc::reset(int centerline_index) {
 
 void ProgressMpc::report_applied(double steer, double speed) {
   Impl& m = *impl_;
-  Impl::Vec applied(kHistory, 0.0);
-  if (!m.applied.empty()) applied = m.applied;
+  const bool first = m.applied.empty();
+  Impl::Vec applied(kHistory + 2, 0.0);
+  if (!first) applied = m.applied;
   const auto steer_history = applied.begin();
   const auto speed_history = applied.begin() + kSteerHistory;
 
@@ -299,11 +301,14 @@ void ProgressMpc::report_applied(double steer, double speed) {
     follow(issued(whole), kControlDt);
   }
 
-  Impl::Vec next(kHistory);
+  Impl::Vec next(kHistory + 2);
   next[0] = steer;
   std::copy(steer_history, steer_history + kSteerHistory - 1, next.begin() + 1);
   next[kSteerHistory] = speed;
   std::copy(speed_history, speed_history + kSpeedHistory - 1, next.begin() + kSteerHistory + 1);
+  // The command before the new last one: the old last (the new command itself on the first report).
+  next[kHistory] = first ? steer : applied[0];
+  next[kHistory + 1] = first ? speed : applied[kSteerHistory];
   m.applied = std::move(next);
 }
 
@@ -352,6 +357,7 @@ int ProgressMpc::horizon() const { return kHorizon; }
 double ProgressMpc::control_dt() const { return kControlDt; }
 int ProgressMpc::history_length() const { return kHistory; }
 double ProgressMpc::speed_max() const { return kSpeedMax; }
+std::array<double, 3> ProgressMpc::step_limits() const { return {kSteerStep, kSpeedStepUp, kSpeedStepDown}; }
 double ProgressMpc::steer_max() const { return kSteerMax; }
 double ProgressMpc::clearance_margin() const { return kClearanceMargin; }
 double ProgressMpc::cog_offset() const { return kLr; }

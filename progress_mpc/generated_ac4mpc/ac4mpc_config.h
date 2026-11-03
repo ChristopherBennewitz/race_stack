@@ -8,11 +8,11 @@ constexpr int kVehicleDim = 7;
 constexpr int kHistory = 3;
 constexpr int kSteerHistory = 2;
 constexpr double kControlDt = 0.025;
-constexpr double kSteerGain = 1.14525;
+constexpr double kSteerGain = 1.13874;
 constexpr double kSteerCubic = 0.0;
-constexpr double kSteerBias = -4.28934e-05;
-constexpr double kSteerLatency = 0.0270196;
-constexpr double kSteerDelay = 0.0385246;
+constexpr double kSteerBias = 0.000116411;
+constexpr double kSteerLatency = 0.0366749;
+constexpr double kSteerDelay = 0.0360396;
 constexpr double kLr = 0.125;
 constexpr double kSteerStep = 0.08;
 constexpr double kSpeedStepUp = 0.1;
@@ -23,7 +23,7 @@ constexpr double kClearanceMargin = 0.3125;
 constexpr int kQpCondN = 8;
 constexpr double kQpTol = 0.0001;
 constexpr double kTrackMargin = 0.1;
-constexpr int kAugDim = 11;
+constexpr int kAugDim = 13;
 constexpr double kQProgress = 1.0;
 
 }  // namespace ac4mpc::generated

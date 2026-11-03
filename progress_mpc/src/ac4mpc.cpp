@@ -31,11 +31,12 @@ using Clock = std::chrono::steady_clock;
 
 constexpr int kStateDim = kVehicleDim + kHistory;  // vehicle state, then the steering and the speed history, newest first
 constexpr int kSpeedHistory = kHistory - kSteerHistory;
+constexpr int kPolicyDim = kStateDim + 1;         // what the actor and the critic see: the state, histories, last speed
 constexpr int kParamDim = kRefDim + 2 * kAugDim;  // the stage reference, then the critic's point and gradient
 constexpr int kPrevSteer = kVehicleDim;           // the newest steering command in the state
 constexpr double kInf = std::numeric_limits<double>::infinity();
 
-static_assert(kAugDim == kStateDim + 1, "the OCP state is the model state and the last speed command");
+static_assert(kAugDim == kStateDim + kAugExtra, "the OCP state is the model state, the last speed and the commands before");
 static_assert(kAugDim == AC4MPC_CRITIC_NX, "the generated OCP does not match the exported step function");
 static_assert(kParamDim == AC4MPC_CRITIC_NP, "the generated OCP's parameters are not the reference and the critic");
 static_assert(kHorizon == AC4MPC_CRITIC_N, "horizon mismatch between ac4mpc_config.h and the acados code");
@@ -118,10 +119,11 @@ class Solver {
   void reset() { ac4mpc_critic_acados_reset(capsule_, 1); }
 
   // One SQP-RTI iteration from the guess; `params` is (horizon + 1, kParamDim).
-  Result run(const Vec& x0, double last_speed, const Vec& states, const Vec& controls, const Vec& params) {
+  Result run(const Vec& x0, const Vec& applied, const Vec& states, const Vec& controls, const Vec& params) {
     const int n = kHorizon;
-    Vec x0_aug(x0);
-    x0_aug.push_back(last_speed);
+    Vec x0_aug(kAugDim);
+    std::copy(x0.begin(), x0.end(), x0_aug.begin());
+    augmented_extras(applied.data(), kSteerHistory, kHistory, controls.data(), 0, &x0_aug[kStateDim]);
     ocp_nlp_constraints_model_set(config_, dims_, in_, 0, "lbx", x0_aug.data());
     ocp_nlp_constraints_model_set(config_, dims_, in_, 0, "ubx", x0_aug.data());
     Vec x_k(kAugDim);
@@ -130,8 +132,7 @@ class Solver {
                                          kParamDim);
       std::copy(&states[static_cast<size_t>(k) * kStateDim], &states[static_cast<size_t>(k + 1) * kStateDim],
                 x_k.begin());
-      // The last speed command at stage k: the applied one, then the plan's own.
-      x_k[kStateDim] = (k == 0) ? last_speed : controls[2 * (k - 1) + 1];
+      augmented_extras(applied.data(), kSteerHistory, kHistory, controls.data(), k, &x_k[kStateDim]);
       ocp_nlp_out_set(config_, dims_, out_, k, "x", x_k.data());
       if (k < n) ocp_nlp_out_set(config_, dims_, out_, k, "u", const_cast<double*>(&controls[2 * k]));
     }
@@ -306,7 +307,7 @@ class Worker {
       command = {feedforward[2 * (n_ff - 1)], feedforward[2 * (n_ff - 1) + 1]};
       idx = indices[n_ff];
     }
-    Vec xa(kAugDim);
+    Vec xa(kPolicyDim);
     for (int k = first; k < steps; ++k) {
       const double* s = &states[static_cast<size_t>(k) * kStateDim];
       idx = policy_.nearest(s[kX], s[kY], idx);
@@ -336,7 +337,7 @@ class Worker {
     if (cfg.eval_correction > 0.0) {  // `_plan_actions`
       const Vec rows = history_rows(in.history, states, controls, n);
       int idx = in.prev;
-      Vec xa(kAugDim);
+      Vec xa(kPolicyDim);
       for (int k = 0; k < n; ++k) {
         const double* s = &states[static_cast<size_t>(k) * kStateDim];
         idx = policy_.nearest(s[kX], s[kY], idx);
@@ -352,9 +353,11 @@ class Worker {
     Vec refs(static_cast<size_t>(steps + 1) * kRefDim);
     project(*track_, sim_states.data(), kStateDim, steps + 1, in.prev, refs.data(), nullptr);
     Vec aug(static_cast<size_t>(steps + 1) * kAugDim);
-    for (int k = 0; k <= steps; ++k)
-      augment(&sim_states[static_cast<size_t>(k) * kStateDim], k == 0 ? in.applied[kSteerHistory] : sim_controls[2 * (k - 1) + 1],
-              &aug[static_cast<size_t>(k) * kAugDim]);
+    for (int k = 0; k <= steps; ++k) {
+      double* row = &aug[static_cast<size_t>(k) * kAugDim];
+      std::copy(&sim_states[static_cast<size_t>(k) * kStateDim], &sim_states[static_cast<size_t>(k + 1) * kStateDim], row);
+      augmented_extras(in.applied.data(), kSteerHistory, kHistory, sim_controls.data(), k, row + kStateDim);
+    }
 
     double cost = rate_cost(aug.data(), sim_controls.data());
     for (int k = 1; k < steps; ++k)
@@ -383,7 +386,7 @@ class Worker {
     const double* last = &sim[static_cast<size_t>(n) * kStateDim];
     const int idx = policy_.nearest(last[kX], last[kY], plan.last_idx);
     const Vec rows = history_rows(plan.history, sim, plan.controls, n);
-    Vec xa(kAugDim);
+    Vec xa(kPolicyDim);
     augment(last, last_command[1], xa.data());
     const auto action = policy_.act(xa.data(), idx, &rows[static_cast<size_t>(n) * kHistoryRowDim]);
     const auto command = limit(action.data(), last_command);
@@ -424,16 +427,18 @@ class Worker {
       std::copy(&b.refs[static_cast<size_t>(k) * kRefDim], &b.refs[static_cast<size_t>(k + 1) * kRefDim],
                 &params[static_cast<size_t>(k) * kParamDim]);
     if (s_->uses_critic) {
-      Vec xa(kAugDim), grad(kAugDim);
+      Vec xa(kPolicyDim), grad(kPolicyDim);
       augment(&guess.states[static_cast<size_t>(n) * kStateDim], guess.controls[2 * (n - 1) + 1], xa.data());
       const Vec rows = history_rows(in.history, guess.states, guess.controls, n);
       policy_.value(xa.data(), b.indices[n], &rows[static_cast<size_t>(n) * kHistoryRowDim], grad.data());
       double* p = &params[static_cast<size_t>(n) * kParamDim + kRefDim];
       std::copy(xa.begin(), xa.end(), p);
-      for (int i = 0; i < kAugDim; ++i) p[kAugDim + i] = s_->value_weight * grad[i];
+      augmented_extras(in.applied.data(), kSteerHistory, kHistory, guess.controls.data(), n, p + kPolicyDim);
+      // The critic does not read the previous commands: their gradient stays zero.
+      for (int i = 0; i < kPolicyDim; ++i) p[kAugDim + i] = s_->value_weight * grad[i];
     }
 
-    Solver::Result r = solver_->run(in.x0, in.applied[kSteerHistory], guess.states, guess.controls, params);
+    Solver::Result r = solver_->run(in.x0, in.applied, guess.states, guess.controls, params);
     b.solver_seconds = r.seconds;
     b.iterations = r.iterations;
     if (!r.ok) {
@@ -625,7 +630,7 @@ struct Ac4Mpc::Impl {
 
   // Runs every network and the solvers once, so the first control step does not pay for lazy initialization.
   void warm_up() {
-    Vec xa(kAugDim, 0.0), grad(kAugDim), past(static_cast<size_t>(meta.history_len - 1) * kHistoryRowDim, 0.0);
+    Vec xa(kPolicyDim, 0.0), grad(kPolicyDim), past(static_cast<size_t>(meta.history_len - 1) * kHistoryRowDim, 0.0);
     xa[kX] = track.center[0][0], xa[kY] = track.center[0][1];
     xa[kYaw] = std::atan2(track.tangent[0][1], track.tangent[0][0]);
     xa[kVx] = 1.0;
@@ -641,8 +646,9 @@ struct Ac4Mpc::Impl {
 
   Vec applied_or_rest(double vx) const {
     if (!applied.empty()) return applied;
-    Vec rest(kHistory, 0.0);
+    Vec rest(kHistory + 2, 0.0);
     rest[kSteerHistory] = vx;
+    rest[kHistory + 1] = vx;  // the command before the last: the same, so the first step is not penalized
     return rest;
   }
 
@@ -750,8 +756,9 @@ void Ac4Mpc::reset(int centerline_index) {
 
 void Ac4Mpc::report_applied(double steer, double speed) {
   Impl& m = *impl_;
-  Vec applied(kHistory, 0.0);
-  if (!m.applied.empty()) applied = m.applied;
+  const bool first = m.applied.empty();
+  Vec applied(kHistory + 2, 0.0);
+  if (!first) applied = m.applied;
   const auto steer_history = applied.begin();
   const auto speed_history = applied.begin() + kSteerHistory;
 
@@ -774,11 +781,14 @@ void Ac4Mpc::report_applied(double steer, double speed) {
     follow(issued(whole), kControlDt);
   }
 
-  Vec next(kHistory);
+  Vec next(kHistory + 2);
   next[0] = steer;
   std::copy(steer_history, steer_history + kSteerHistory - 1, next.begin() + 1);
   next[kSteerHistory] = speed;
   std::copy(speed_history, speed_history + kSpeedHistory - 1, next.begin() + kSteerHistory + 1);
+  // The command before the new last one: the old last (the new command itself on the first report).
+  next[kHistory] = first ? steer : applied[0];
+  next[kHistory + 1] = first ? speed : applied[kSteerHistory];
   m.applied = std::move(next);
 }
 
@@ -879,7 +889,7 @@ std::array<double, 2> Ac4Mpc::policy_act(const std::vector<double>& xa, int idx,
 double Ac4Mpc::policy_value(const std::vector<double>& xa, int idx, const std::vector<double>& past,
                             std::vector<double>* grad) {
   if (!impl_->active) throw std::runtime_error("set_track must be called first");
-  if (grad) grad->assign(kAugDim, 0.0);
+  if (grad) grad->assign(kPolicyDim, 0.0);
   return impl_->active->policy().value(xa.data(), idx, past.data(), grad ? grad->data() : nullptr);
 }
 

@@ -52,16 +52,16 @@ extern "C" {
   #endif
 #endif
 
-static const casadi_int casadi_s0[3] = {11, 1, 1};
+static const casadi_int casadi_s0[3] = {13, 1, 1};
 static const casadi_int casadi_s1[3] = {0, 0, 1};
 static const casadi_int casadi_s2[3] = {7, 1, 1};
 static const casadi_int casadi_s3[3] = {1, 1, 1};
-static const casadi_int casadi_s4[14] = 
-  {11, 11, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0};
-static const casadi_int casadi_s5[3] = {0, 11, 1};
+static const casadi_int casadi_s4[16] = 
+  {13, 13, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0};
+static const casadi_int casadi_s5[3] = {0, 13, 1};
 
-/* progress_mpc_cost_ext_cost_e_fun_jac_hess:(i0[11],i1[],i2[],i3[7])->(o0,o1[11],o2[11x11,0nz],o3[],o4[0x11]) */
+/* progress_mpc_cost_ext_cost_e_fun_jac_hess:(i0[13],i1[],i2[],i3[7])->(o0,o1[13],o2[13x13,0nz],o3[],o4[0x13]) */
 static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem) {
   casadi_real a0, a1, a2, a3, a4;
   a0=arg[3]? arg[3][4] : 0;
@@ -93,6 +93,8 @@ static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw,
   if (res[1]!=0) res[1][8]=a2;
   if (res[1]!=0) res[1][9]=a2;
   if (res[1]!=0) res[1][10]=a2;
+  if (res[1]!=0) res[1][11]=a2;
+  if (res[1]!=0) res[1][12]=a2;
   return 0;
 }
 

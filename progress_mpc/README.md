@@ -45,6 +45,17 @@ uv run --project ../f1tenth_parallel_sim python progress_mpc/scripts/export_acad
 Only the track is a runtime input. `scripts/export_acados.py` writes the acados solver, CasADi's C code for
 the model step, and `mpc_config.h` with the sizes and car constants the wrapper uses.
 
+### Command smoothing
+
+The cost penalizes the change of each command per period (`q_steer_rate`, `q_vel_rate`) and its second difference,
+`(u_k - 2 u_(k-1) + u_(k-2))^2` (`q_steer_accel` for the steering, `q_vel_accel` for the speed command). The OCP state therefore
+holds the last speed command and the command before the last one (steer, speed), three values after the model state and
+its histories, and `report_applied` keeps that previous command. The weights are in the sim's `configs/progress_mpc.toml`
+(300 and 50; 0 switches the terms off) and are baked into the export; `--q-steer-accel` and `--q-vel-accel` override them
+when exporting. In the sim (1200 steps, the exported settings) the second difference of the applied commands fell by 57 %
+(steering) and 50 % (speed) with no loss of progress; that was a single run, not a tuned optimum. `configs/ac4mpc.toml` has
+the terms at 0.
+
 ## Solve time
 
 One SQP-RTI iteration costs ~7.6 ms on a fast laptop, ~26 ms on the car's NUC (the control period is 25 ms). 97 % of it is

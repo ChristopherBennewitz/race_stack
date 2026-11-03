@@ -36,13 +36,13 @@
 #include "acados_c/ocp_nlp_interface.h"
 #include "acados_c/external_function_interface.h"
 
-#define AC4MPC_CRITIC_NX     11
+#define AC4MPC_CRITIC_NX     13
 #define AC4MPC_CRITIC_NZ     0
 #define AC4MPC_CRITIC_NU     2
-#define AC4MPC_CRITIC_NP     29
+#define AC4MPC_CRITIC_NP     33
 #define AC4MPC_CRITIC_NP_GLOBAL     0
 #define AC4MPC_CRITIC_NBX    0
-#define AC4MPC_CRITIC_NBX0   11
+#define AC4MPC_CRITIC_NBX0   13
 #define AC4MPC_CRITIC_NBU    2
 #define AC4MPC_CRITIC_NSBX   0
 #define AC4MPC_CRITIC_NSBU   0

@@ -66,6 +66,18 @@ def add_arguments(
         "steering reversals in the hangar sim",
     )
     parser.add_argument(
+        "--q-steer-accel",
+        type=float,
+        default=-1.0,
+        help="weight on the second difference of the steering command; negative keeps the sim config's",
+    )
+    parser.add_argument(
+        "--q-vel-accel",
+        type=float,
+        default=-1.0,
+        help="weight on the second difference of the speed command; negative keeps the sim config's",
+    )
+    parser.add_argument(
         "--levenberg-marquardt",
         type=float,
         default=levenberg_marquardt,
@@ -91,6 +103,10 @@ def sim_config(args: argparse.Namespace, work: Path, ac4mpc: bool = False):
         overrides["max_speed"] = args.max_speed
     if args.q_steer_rate >= 0.0:
         overrides["q_steer_rate"] = args.q_steer_rate
+    if args.q_steer_accel >= 0.0:
+        overrides["q_steer_accel"] = args.q_steer_accel
+    if args.q_vel_accel >= 0.0:
+        overrides["q_vel_accel"] = args.q_vel_accel
     if args.levenberg_marquardt >= 0.0:
         overrides["levenberg_marquardt"] = args.levenberg_marquardt
     return config.model_copy(update={**overrides, "output_dir": work})

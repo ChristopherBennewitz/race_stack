@@ -70,6 +70,8 @@ class ProgressMpc {
   int history_length() const;
   // Command limits baked into the OCP.
   double speed_max() const;
+  // The most the commands change per control period: steer, speed up, speed down (the actuation manager's rates).
+  std::array<double, 3> step_limits() const;
   double steer_max() const;
   // How far inside the track limits the centre of gravity must stay (m): collision radius plus margin.
   double clearance_margin() const;

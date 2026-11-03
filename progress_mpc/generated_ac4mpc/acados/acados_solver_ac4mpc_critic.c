@@ -242,7 +242,7 @@ static ocp_nlp_dims* ac4mpc_critic_acados_create_setup_dimensions(ac4mpc_critic_
     nbx[0] = NBX0;
     nsbx[0] = 0;
     ns[0] = NS0;
-    nbxe[0] = 11;
+    nbxe[0] = 13;
     ny[0] = NY0;
     nh[0] = NH0;
     nsh[0] = NSH0;
@@ -616,6 +616,8 @@ void ac4mpc_critic_acados_setup_nlp_in(ac4mpc_critic_solver_capsule* capsule, co
     idxbx0[8] = 8;
     idxbx0[9] = 9;
     idxbx0[10] = 10;
+    idxbx0[11] = 11;
+    idxbx0[12] = 12;
 
     double* lubx0 = calloc(2*NBX0, sizeof(double));
     double* lbx0 = lubx0;
@@ -628,7 +630,7 @@ void ac4mpc_critic_acados_setup_nlp_in(ac4mpc_critic_solver_capsule* capsule, co
     free(idxbx0);
     free(lubx0);
     // idxbxe_0
-    int* idxbxe_0 = malloc(11 * sizeof(int));
+    int* idxbxe_0 = malloc(13 * sizeof(int));
     idxbxe_0[0] = 0;
     idxbxe_0[1] = 1;
     idxbxe_0[2] = 2;
@@ -640,6 +642,8 @@ void ac4mpc_critic_acados_setup_nlp_in(ac4mpc_critic_solver_capsule* capsule, co
     idxbxe_0[8] = 8;
     idxbxe_0[9] = 9;
     idxbxe_0[10] = 10;
+    idxbxe_0[11] = 11;
+    idxbxe_0[12] = 12;
     ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, 0, "idxbxe", idxbxe_0);
     free(idxbxe_0);
 
@@ -1062,7 +1066,7 @@ int ac4mpc_critic_acados_update_params(ac4mpc_critic_solver_capsule* capsule, in
 {
     int solver_status = 0;
 
-    int casadi_np = 29;
+    int casadi_np = 33;
     if (casadi_np != np) {
         printf("acados_update_params: trying to set %i parameters for external functions."
             " External function has %i parameters. Exiting.\n", np, casadi_np);
