@@ -291,7 +291,7 @@ void ProgressMpc::report_applied(double steer, double speed) {
   if (fraction < 1e-9) fraction = 0.0;
   auto issued = [&](int periods_ago) { return periods_ago == 0 ? steer : steer_history[periods_ago - 1]; };
   auto follow = [&](double command, double duration) {
-    const double target = kSteerGain * command + kSteerCubic * command * command * command + kSteerBias;
+    const double target = kSteerGain * command + kSteerBias;
     m.steer_estimate += (target - m.steer_estimate) * (1.0 - std::exp(-duration / kSteerLatency));
   };
   if (fraction > 0.0) {

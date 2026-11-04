@@ -681,7 +681,7 @@ void ac4mpc_critic_acados_setup_nlp_in(ac4mpc_critic_solver_capsule* capsule, co
     double* ubu = lubu + NBU;
     lbu[0] = -0.3;
     ubu[0] = 0.3;
-    ubu[1] = 5;
+    ubu[1] = 8;
 
     for (int i = 0; i < N; i++)
     {
