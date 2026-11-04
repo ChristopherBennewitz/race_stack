@@ -1,7 +1,8 @@
 # Simulator-model EKF of NUC7 (python ekf_node, model_type simulator_single_track_model).
 # Only the entries listed here override the defaults in state_estimation/ekf_node/defaults.py, and those defaults are the
 # NUC2 fit. The vehicle and actuator model below is the NUC7 fit of f1tenth_parallel_sim (configs/sysid_nuc7.toml, tire shape
-# factor C pinned at 1.0, B and D fitted, run 20261102-130236, the sysid takes of 2026-10-30); the noise terms are NUC2's (tuning on the NUC7 takes did not generalize, see the end).
+# factor C pinned at 1.0, B and D fitted, run 20261103-173608, the sysid takes of 2026-10-30 plus the MPC drive of 2026-11-03; I_z and
+# the steering lag are held fixed, see below); the noise terms are NUC2's (tuning on the NUC7 takes did not generalize, see the end).
 # Values must keep a decimal point (ROS reads 4 as an integer and rejects it for a double parameter).
 /**:
   ros__parameters:
@@ -12,28 +13,30 @@
     sim_imu_accel_bias: [-0.04, 0.06]
     # The wheelbase of NUC7 is 0.258 m, so front_axle_distance + rear_axle_distance must add up to it (NUC2: 0.321).
     sim_mass: 2.7
-    sim_yaw_inertia: 0.05
+    # Held at 0.04 (the fit gives 0.039 +- 0.004).
+    sim_yaw_inertia: 0.04
     sim_front_axle_distance: 0.133
     sim_rear_axle_distance: 0.125
 
     # --- fitted on the NUC7 sysid takes ---
-    # CoG height: fitted (0.0614 +- 0.0040 m), the 0.03 m of the first NUC7 sheet did not fit. It is degenerate with the
+    # CoG height: fitted (0.0587 +- 0.0033 m), the 0.03 m of the first NUC7 sheet did not fit. It is degenerate with the
     # front/rear drive split (kept at an even 0.5), so read it as the combined load-transfer effect.
-    sim_cg_height: 0.0613698
-    sim_steer_gain: 1.13874
-    sim_steer_bias: 0.000116411
-    sim_steer_delay: 0.0360396
-    sim_steer_latency: 0.0366749
+    sim_cg_height: 0.058692
+    sim_steer_gain: 1.142
+    sim_steer_bias: -0.000098195
+    sim_steer_delay: 0.031628
+    # Held at 0.048: the data only fixes steer_delay + steer_latency (~80 ms); 48 ms matches a slow-motion video of the wheels.
+    sim_steer_latency: 0.048
     sim_speed_delay: 0.0
-    sim_drive_gain: 8.03224
-    sim_brake_gain: 7.08783
-    sim_front_B: 33.7208
+    sim_drive_gain: 7.8858
+    sim_brake_gain: 7.0114
+    sim_front_B: 29.442
     sim_front_C: 1.0
-    sim_front_D: 0.462155
+    sim_front_D: 0.46529
     sim_front_E: 0.0
-    sim_rear_B: 10.3116
+    sim_rear_B: 11.046
     sim_rear_C: 1.0
-    sim_rear_D: 0.701309
+    sim_rear_D: 0.65949
     sim_rear_E: 0.0
     # sim_front_drive_frac, sim_constraint_time_constant, sim_blend_center, sim_slip_speed_regularizer keep the defaults
     # (0.5, 0.03, 0.6, 0.1), as in the fit.
