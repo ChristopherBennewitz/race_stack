@@ -18,10 +18,19 @@
     <group>
         <set_parameter name="use_sim_time" value="$(var use_sim_time)" />
 
+        <!-- VESC IMU rotated into base_link, synchronously (imu_transformer reorders messages at
+        startup,
+             which cartographer refuses). Input of the EKF, so it lives here and not in the driver bringup. -->
+        <node pkg="state_estimation" exec="imu_to_base_node" name="imu_to_base">
+            <param name="input_topic" value="/sensors/imu/raw" />
+            <param name="output_topic" value="/imu" />
+            <param name="target_frame" value="base_link" />
+            <param from="$(find-pkg-share stack_master)/config/$(var racecar_version)/imu.yaml" />
+        </node>
+
         <!-- EKF IMU + Odom Fusion -->
         <group unless="$(var skip_early_fusion)">
             <include file="$(find-pkg-share state_estimation)/launch/ekf_node_launch.py">
-                <arg name="racecar_version" value="$(var racecar_version)" />
                 <arg name="custom_ekf" value="$(var custom_ekf)" />
                 <arg name="model_type" value="$(var ekf_model_type)" />
                 <arg name="global_ekf" value="$(var global_ekf)" />
@@ -78,7 +87,6 @@
 
         <include if="$(var use_vio)"
             file="$(find-pkg-share state_estimation)/launch/vio_composed.launch.py">
-            <arg name="racecar_version" value="$(var racecar_version)" />
             <arg name="viz_flow" value="$(var viz_flow)" />
         </include>
 

@@ -4,8 +4,8 @@
     <arg name="ctrl_algo" default="MAP" />
     <arg name="record_bag" default="False" description="True to record a rosbag of the controller topics (see controller README)" />
     <arg name="measure" default="False" />
-    <arg name="sim_opp" default="False" description="True to run the time trials stack as the simulated opponent (remaps topics to the opponent ones)" />
     <arg name="raceline" default="mincurv" description="'mincurv' / 'shortest_path' / 'centerline'" />
+    <arg name="sim_opp" default="False" description="True to run the time trials stack as the simulated opponent (remaps topics to the opponent ones)" />
 
     <!-- TODO feed this somewhere-->
     <let name="param_file"
@@ -18,7 +18,6 @@
     <!-- launch controller manager -->
     <include file="$(find-pkg-share controller)/launch/controller_launch.xml">
         <arg name="mode" value="$(var ctrl_algo)" />
-        <arg name="LU_table" value="$(var LU_table)" />
         <arg name="sim_opp" value="$(var sim_opp)" />
         <arg name="record_bag" value="$(var record_bag)" />
     </include>
@@ -35,7 +34,6 @@
     <!-- frenet odom of the sim opponent, the ego one comes from base_system -->
     <node pkg="frenet_odom_republisher" exec="frenet_odom_republisher_node" name="frenet_odom_republisher"
         output="screen" if="$(var sim_opp)">
-        <param name="base_frame" value="opp_racecar/base_link" />
         <remap from="/state_estimation/odom" to="/opp_racecar/odom" />
         <remap from="/car_state/frenet/odom" to="/opp_racecar/frenet/odom" />
     </node>
@@ -48,8 +46,8 @@
     </node>
 
     <include file="$(find-pkg-share local_planner)/launch/local_planner_launch.xml">
-        <arg name="sim_opp" value="$(var sim_opp)" />
         <arg name="raceline" value="$(var raceline)" />
+        <arg name="sim_opp" value="$(var sim_opp)" />
     </include>
     </group>
 

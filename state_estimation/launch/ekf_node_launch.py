@@ -46,13 +46,11 @@ def generate_launch_description():
                             # since ROS2 launch arguments are always strings and can't cleanly carry float arrays.
                             # Q needs to match the state-dimension of the selected model.
                             'frequency': 100,
-                            'racecar_version': LaunchConfiguration('racecar_version'),
                             'model_type': LaunchConfiguration('model_type'),
                             'odom_topic': LaunchConfiguration('odom_topic'),
                             'imu_topic': LaunchConfiguration('imu_topic'),
                             'vesc_topic': LaunchConfiguration('odom_vesc_topic'),
                             'vio_topic': '/basalt/odom',
-                            'floor': LaunchConfiguration('floor'),
                             # robot_localization publishes odom->base_link (publish_tf in ekf.yaml); Cartographer
                             # (provide_odom_frame = false) needs it to publish map->odom, so this node must too.
                             'send_transform': True,
@@ -92,8 +90,6 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('custom_ekf', default_value='false'),
         DeclareLaunchArgument('model_type', default_value='point_mass_model'),
-        DeclareLaunchArgument('racecar_version', default_value='none'),
-        DeclareLaunchArgument('floor', default_value='dubi'),
 
         DeclareLaunchArgument('odom_vesc_topic', default_value='/odom'),
         DeclareLaunchArgument('imu_topic', default_value='/imu'),

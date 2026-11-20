@@ -10,7 +10,7 @@ import tf_transformations as tft
 from ackermann_msgs.msg import AckermannDriveStamped
 from filterpy.kalman import ExtendedKalmanFilter
 from nav_msgs.msg import Odometry
-from pbl_config import load_car_config_ros, load_pacejka_tire_config_ros, get_remote_parameter
+from forza_config_ros import load_car_config_ros, load_pacejka_tire_config_ros, get_remote_parameter
 from rclpy.node import Node
 from rcl_interfaces.msg import SetParametersResult
 
@@ -55,7 +55,6 @@ class EkfNode(Node):
         self.declare_parameter('vio_topic', '/basalt/odom')
         self.declare_parameter('send_transform', False)
         self.declare_parameter('frame_id', 'odom')  # the frame the published odometry is in
-        self.declare_parameter('floor', rclpy.Parameter.Type.STRING)
         self.declare_parameter('R_imu', rclpy.Parameter.Type.DOUBLE_ARRAY)
         self.declare_parameter('R_vesc', rclpy.Parameter.Type.DOUBLE_ARRAY)
         self.declare_parameter('R_vio', rclpy.Parameter.Type.DOUBLE_ARRAY)
@@ -69,8 +68,8 @@ class EkfNode(Node):
             self.declare_parameter('sim_' + name, default)
 
         self.Hz = self.get_parameter('frequency').value
-        self.racecar_version = os.environ.get('RACECAR_VERSION', 'NUC6')
-        self.floor = get_remote_parameter(self, 'global_parameters', 'floor', default='dubi')
+        self.racecar_version = get_remote_parameter(self, 'global_parameters', 'racecar_version')
+        self.floor = get_remote_parameter(self, 'global_parameters', 'floor')
 
         self.model_type = self.get_parameter('model_type').value
         self.ODOM_TOPIC = self.get_parameter('odom_topic').value
@@ -100,39 +99,19 @@ class EkfNode(Node):
 
         # Get Car Parameters. The simulator model carries its own (sim_*), so it needs no pbl_config files
         # (a car without a pacejka/<floor> folder, like NUC2, can still run it).
-        self.p = {}
+        car_config = tire_config = None
         if not self.uses_sim_model:
             tire_config = load_pacejka_tire_config_ros(self.racecar_version, self.floor)
             car_config = load_car_config_ros(self.racecar_version)
             self.get_logger().info(f"[EKF Node] Loaded Config with: {self.racecar_version} and {self.floor}")
-            self.p = {
-                # Tire Parameters
-                'Bf': tire_config.Bf,
-                'Cf': tire_config.Cf,
-                'Df': tire_config.Df,
-                'Ef': tire_config.Ef,
-                'Br': tire_config.Br,
-                'Cr': tire_config.Cr,
-                'Dr': tire_config.Dr,
-                'Er': tire_config.Er,
-                'mu': tire_config.friction_coeff,
-
-                # Car Physical Configs
-                'm': car_config.m,
-                'I_z': car_config.Iz,
-                'l_f': car_config.lf,
-                'l_r': car_config.lr,
-                'h_cg': car_config.h_cg,
-                'wheelbase': car_config.wheelbase
-            }
 
         # Build the right Model Object
         if self.model_type == "point_mass_model":
             self.model = models.point_mass_model(self.Q)
         elif self.model_type == "kinematic_bicycle_model":
-            self.model = models.kinematic_bicycle_model(self.p, self.Q)
+            self.model = models.kinematic_bicycle_model(car_config, self.Q)
         elif self.model_type == "single_track_model":
-            self.model = models.single_track_model(self.p, self.Q)
+            self.model = models.single_track_model(car_config, tire_config, self.Q)
         elif self.uses_sim_model:
             self.model = SimulatorSingleTrackModel(self._sim_model_params(), self.Q)
         else:
@@ -143,7 +122,7 @@ class EkfNode(Node):
         if self.uses_sim_model:
             self.cog_to_base_link = self.model.params.l_r
         elif self.model_type == "single_track_model":
-            self.cog_to_base_link = self.p['l_r']
+            self.cog_to_base_link = car_config.lr
         else:
             self.cog_to_base_link = 0.0
 
