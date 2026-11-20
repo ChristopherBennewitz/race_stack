@@ -20,4 +20,5 @@
 	branch = ros2-humble
 [submodule "progress_mpc"]
 	path = progress_mpc
-	url = /home/chris/dev/race-stack-own/mpc_core
+	url = git@github.com:ChristopherBennewitz/mpc_core.git
+	branch = main
