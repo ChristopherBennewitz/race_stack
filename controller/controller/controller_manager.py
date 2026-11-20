@@ -423,7 +423,8 @@ class Controller(Node):
             policy, mode=param('ac4mpc_mode', 'full'), value_weight=param('ac4mpc_value_weight', 0.2),
             reinit_period=param('ac4mpc_reinit_period', 5), eval_correction=param('ac4mpc_eval_correction', 0.0),
             eval_rollout=param('ac4mpc_eval_rollout', 0), threads=param('ac4mpc_threads', True),
-            torch_threads=param('ac4mpc_torch_threads', 1))
+            torch_threads=param('ac4mpc_torch_threads', 1),
+            reseed_from_previous=param('ac4mpc_reseed_from_previous', False))
         self.get_logger().info(f"AC4MPC {param('ac4mpc_mode', 'full')} with {policy}")
         return planner
 

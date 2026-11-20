@@ -87,7 +87,7 @@ def track_envelope(xy, d_left, d_right, clearance):
 
 
 def make_ac4mpc(policy, mode='full', value_weight=0.2, reinit_period=5, eval_correction=0.0, eval_rollout=0,
-                threads=True, torch_threads=1, track_spacing=0.1):
+                threads=True, torch_threads=1, track_spacing=0.1, reseed_from_previous=False):
     """The C++ AC4MPC (actor and critic guided progress MPC) for `MPC_Controller`'s `planner`.
 
     `policy` is the TorchScript module the sim repo's ``scripts/export_policy.py`` writes from a PPO checkpoint; it must
@@ -103,7 +103,8 @@ def make_ac4mpc(policy, mode='full', value_weight=0.2, reinit_period=5, eval_cor
                            "(see progress_mpc/README.md)")
     return Ac4Mpc(policy, mode=mode, value_weight=value_weight, reinit_period=reinit_period,
                   eval_correction=eval_correction, eval_rollout=eval_rollout, threads=threads,
-                  torch_threads=torch_threads, track_spacing=track_spacing)
+                  torch_threads=torch_threads, track_spacing=track_spacing,
+                  reseed_from_previous=reseed_from_previous)
 
 
 class MPC_Controller:
@@ -142,7 +143,8 @@ class MPC_Controller:
         self._last_call = None
         self._window = self._empty_window()
         logger.info(f"{'AC4MPC' if hasattr(self.mpc, 'candidate_wins') else 'Progress MPC'}: "
-                    f"horizon {self.mpc.horizon} x {self.mpc.control_dt} s, "
+                    f"horizon {self.mpc.horizon} stages, first {self.mpc.control_dt} s, "
+                    f"{getattr(self.mpc, 'horizon_seconds', self.mpc.horizon * self.mpc.control_dt):.2f} s ahead, "
                     f"speed <= {self.mpc.speed_max} m/s, steer <= {self.mpc.steer_max} rad")
 
     @property

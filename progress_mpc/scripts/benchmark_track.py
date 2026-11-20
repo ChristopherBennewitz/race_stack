@@ -9,7 +9,8 @@ sim's `configs/maps/<name>/` (copy `stack_master/maps/<name>/`; drop the repeate
     PYTHONPATH=<build>/python ... --round 3        # the deployed C++ controller (needs the built progress_mpc module)
 
 --round 1: margin / speed cap / horizon / compensation, 6 starts x 40 s.  --round 2: margins, horizons, the exported QP
-settings, 10 starts x 60 s.  --round 3: the deployed C++ controller against the Python reference.  Results and the
+settings, 10 starts x 60 s.  --round 3: the deployed C++ controller against the Python reference.  --round 4: uniform against graded horizons
+(`GradedProgressMPC`, the exporter's default settings), 10 starts x 60 s.  Results and the
 decision: progress_mpc/docs/track_clearance.md.
 
 Plant: the sim's vehicle model at 400 Hz, commands through the actuation manager (100 Hz tick, rate limits).
@@ -63,7 +64,16 @@ VARIANTS3 = {
     "C++ 5 m/s (no cap), comp off": dict(cfg=dict(track_margin=0.10), delays=True, comp=False, cpp=True),
     "C++ deployed, no delays":    dict(cfg=dict(track_margin=0.10, max_speed=4.0), delays=False, comp=False, cpp=True),
 }
-ROUNDS = {"1": VARIANTS, "2": VARIANTS2, "3": VARIANTS3}
+EXPORT = dict(track_margin=0.10, q_steer_rate=30.0, levenberg_marquardt=0.03)   # the exporter's defaults
+VARIANTS4 = {
+    "uniform 40 x 25 ms (1.0 s)":    dict(cfg=EXPORT, delays=True, comp=True, qp=True),
+    "uniform 60 x 25 ms (1.5 s)":    dict(cfg=dict(EXPORT, horizon_nodes=60), delays=True, comp=True, qp=True),
+    "graded 40 nodes, 1.25 s":       dict(cfg=dict(EXPORT, horizon_seconds=1.25), delays=True, comp=True, qp=True, graded=True),
+    "graded 40 nodes, 1.5 s":        dict(cfg=dict(EXPORT, horizon_seconds=1.5), delays=True, comp=True, qp=True, graded=True),
+    "graded 40 nodes, 1.75 s":       dict(cfg=dict(EXPORT, horizon_seconds=1.75), delays=True, comp=True, qp=True, graded=True),
+    "graded 40 nodes, 2.0 s":        dict(cfg=dict(EXPORT, horizon_seconds=2.0), delays=True, comp=True, qp=True, graded=True),
+}
+ROUNDS = {"1": VARIANTS, "2": VARIANTS2, "3": VARIANTS3, "4": VARIANTS4}
 if os.environ.get("ROUND", "1") in ROUNDS:
     VARIANTS = ROUNDS[os.environ.get("ROUND", "1")]
 
@@ -74,9 +84,13 @@ def run_variant(name, starts):
     os.chdir(SIM)
     from f1tenth_sim.config import CarConfig
     from f1tenth_sim.sim import BatchedSim
+    from mpc.graded_progress_mpc import GradedProgressMPC, GradedProgressMPCConfig
     from mpc.progress_mpc import ProgressMPC, ProgressMPCConfig
     spec = VARIANTS[name]
-    cfg = ProgressMPCConfig.from_toml(SIM / "configs" / "progress_mpc.toml").model_copy(update=dict(
+    if spec.get("graded"):
+        ProgressMPC, ProgressMPCConfig = GradedProgressMPC, GradedProgressMPCConfig
+    toml = "progress_mpc_graded.toml" if spec.get("graded") else "progress_mpc.toml"
+    cfg = ProgressMPCConfig.from_toml(SIM / "configs" / toml).model_copy(update=dict(
         track_dir=SIM / "configs" / "maps" / MAP, track_name=MAP,
         output_dir=Path(tempfile.mkdtemp()) / "m", **spec["cfg"]))
     if spec.get("qp"):
@@ -184,7 +198,7 @@ if __name__ == "__main__":
     os.environ["T_END"] = str(args.seconds or (40.0 if args.round == "1" else 60.0))
     VARIANTS = ROUNDS[args.round]
     sys.argv = [sys.argv[0], *args.variants]
-    starts = [10, 35, 60, 85, 110, 135, 160, 185, 210, 235] if os.environ.get("ROUND") in ("2", "3") else [10, 53, 96, 139, 182, 225]
+    starts = [10, 35, 60, 85, 110, 135, 160, 185, 210, 235] if os.environ.get("ROUND") in ("2", "3", "4") else [10, 53, 96, 139, 182, 225]
     names = args.variants or list(VARIANTS)
     t0 = time.time()
     out = {}

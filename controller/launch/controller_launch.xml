@@ -9,6 +9,7 @@
   <arg name="ac4mpc_value_weight" default="0.2" description="AC4MPC mode only: the paper's beta, the scale on the critic in the QP"/>
   <arg name="ac4mpc_reinit_period" default="5" description="AC4MPC mode only: steps between re-seeding the parallel solver with the actor's rollout"/>
   <arg name="ac4mpc_eval_correction" default="0.0" description="AC4MPC mode only: alpha, actor feedback on a candidate's commands when it is scored"/>
+  <arg name="ac4mpc_reseed_from_previous" default="False" description="AC4MPC mode only: re-seed the parallel solver from the previous step's actor plan (shifted) instead of a fresh rollout; removes the every-reinit_period peak in the solve time"/>
   <arg name="ac4mpc_eval_rollout" default="0" description="AC4MPC mode only: actor steps past the horizon when a candidate is scored"/>
   <arg name="direction" default="ccw" description="RL / MPC / AC4MPC modes only: 'ccw' / 'cw', the driving direction (the RL policy was trained for one)"/>
   <arg name="odom_topic" default="/state_estimation/odom" description="RL / MPC / AC4MPC modes only: the state estimate, in any frame. /state_estimation/odom_map is the smooth map-frame one (local odometry plus the corrected map-&gt;odom, from state_estimation's map_odom_node; the simulator does not publish it)"/>
@@ -39,6 +40,7 @@
         <param name="ac4mpc_reinit_period" value="$(var ac4mpc_reinit_period)"/>
         <param name="ac4mpc_eval_correction" value="$(var ac4mpc_eval_correction)"/>
         <param name="ac4mpc_eval_rollout" value="$(var ac4mpc_eval_rollout)"/>
+        <param name="ac4mpc_reseed_from_previous" value="$(var ac4mpc_reseed_from_previous)"/>
         <param name="direction" value="$(var direction)"/>
         <param name="odom_topic" value="$(var odom_topic)"/>
     </node>

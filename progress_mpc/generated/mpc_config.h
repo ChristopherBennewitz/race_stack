@@ -20,7 +20,7 @@ constexpr double kSteerMax = 0.3;
 constexpr double kSpeedMax = 8.0;
 constexpr double kClearanceMargin = 0.3125;
 constexpr int kQpCondN = 8;
-constexpr double kQpTol = 0.0001;
+constexpr double kQpTol = 0.01;
 constexpr double kTrackMargin = 0.1;
 
 }  // namespace progress_mpc::generated

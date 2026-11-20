@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="590" viewBox="0 0 1000 590" font-family="DejaVu Sans, Arial, sans-serif" fill="#000">
+<rect width="1000" height="590" fill="#fff"/>
+<text x="30" y="38" text-anchor="start" font-size="15" fill="#000" font-weight="bold">QP settings: solver time per step of the plain MPC</text>
+<text x="30" y="58" text-anchor="start" font-size="12" fill="#444">laptop, benchmark_solver.py, 8 starts x 250 steps. cond_N 8 (partial condensing) is the big win; the tolerance below 1e-5 changes little.</text>
+<rect x="26" y="80" width="125" height="118" fill="#e4e4e4" stroke="#000" stroke-width="1.5"/>
+<text x="88.5" y="114" text-anchor="middle" font-size="18" font-weight="bold">8.05 ms</text>
+<text x="88.5" y="136" text-anchor="middle" font-size="12.5">default cond_N</text>
+<text x="88.5" y="155" text-anchor="middle" font-size="12.5">tol 1e-6</text>
+<text x="88.5" y="218" text-anchor="middle" font-size="12" fill="#333">reference</text>
+<rect x="163" y="80" width="125" height="118" fill="#b5c1d3" stroke="#000" stroke-width="1.5"/>
+<text x="225.5" y="114" text-anchor="middle" font-size="18" font-weight="bold">2.46 ms</text>
+<text x="225.5" y="136" text-anchor="middle" font-size="12.5">default cond_N</text>
+<text x="225.5" y="155" text-anchor="middle" font-size="12.5">tol 1e-4</text>
+<text x="225.5" y="218" text-anchor="middle" font-size="12" fill="#333">3.3x faster</text>
+<rect x="300" y="80" width="125" height="118" fill="#b5c1d3" stroke="#000" stroke-width="1.5"/>
+<text x="362.5" y="114" text-anchor="middle" font-size="18" font-weight="bold">4.17 ms</text>
+<text x="362.5" y="136" text-anchor="middle" font-size="12.5">cond_N 8</text>
+<text x="362.5" y="155" text-anchor="middle" font-size="12.5">tol 1e-6</text>
+<text x="362.5" y="218" text-anchor="middle" font-size="12" fill="#333">1.9x faster</text>
+<rect x="437" y="80" width="125" height="118" fill="#b5c1d3" stroke="#000" stroke-width="1.5"/>
+<text x="499.5" y="114" text-anchor="middle" font-size="18" font-weight="bold">1.39 ms</text>
+<text x="499.5" y="136" text-anchor="middle" font-size="12.5">cond_N 8</text>
+<text x="499.5" y="155" text-anchor="middle" font-size="12.5">tol 1e-5</text>
+<text x="499.5" y="218" text-anchor="middle" font-size="12" fill="#333">5.8x faster</text>
+<rect x="574" y="80" width="125" height="118" fill="#b5c1d3" stroke="#000" stroke-width="1.5"/>
+<text x="636.5" y="114" text-anchor="middle" font-size="18" font-weight="bold">1.37 ms</text>
+<text x="636.5" y="136" text-anchor="middle" font-size="12.5">cond_N 8</text>
+<text x="636.5" y="155" text-anchor="middle" font-size="12.5">tol 1e-4</text>
+<text x="636.5" y="218" text-anchor="middle" font-size="12" fill="#333">5.9x faster</text>
+<rect x="711" y="80" width="125" height="118" fill="#b5c1d3" stroke="#000" stroke-width="1.5"/>
+<text x="773.5" y="114" text-anchor="middle" font-size="18" font-weight="bold">1.33 ms</text>
+<text x="773.5" y="136" text-anchor="middle" font-size="12.5">cond_N 8</text>
+<text x="773.5" y="155" text-anchor="middle" font-size="12.5">tol 1e-3</text>
+<text x="773.5" y="218" text-anchor="middle" font-size="12" fill="#333">6.1x faster</text>
+<rect x="848" y="80" width="125" height="118" fill="#b3c6ad" stroke="#000" stroke-width="1.5"/>
+<text x="910.5" y="114" text-anchor="middle" font-size="18" font-weight="bold">1.27 ms</text>
+<text x="910.5" y="136" text-anchor="middle" font-size="12.5">cond_N 8</text>
+<text x="910.5" y="155" text-anchor="middle" font-size="12.5">tol 1e-2</text>
+<text x="910.5" y="174" text-anchor="middle" font-size="12.5">(export default)</text>
+<text x="910.5" y="218" text-anchor="middle" font-size="12" fill="#333">6.3x faster</text>
+<text x="30" y="268" text-anchor="start" font-size="15" fill="#000" font-weight="bold">AC4MPC: time of one control step (actor + two solvers, three threads)</text>
+<text x="30" y="288" text-anchor="start" font-size="12" fill="#444">laptop, real checkpoint, mode full, 8 starts x 300 steps, mean of two runs. The NUC7 is ~3.5x slower.</text>
+<rect x="26" y="310" width="228" height="200" fill="#d5b9a4" stroke="#000" stroke-width="1.5"/>
+<text x="140.0" y="344" text-anchor="middle" font-size="18" font-weight="bold">tol 1e-4</text>
+<text x="140.0" y="366" text-anchor="middle" font-size="12.5">default</text>
+<text x="140.0" y="385" text-anchor="middle" font-size="12.5"></text>
+<text x="140.0" y="404" text-anchor="middle" font-size="12.5">all cores</text>
+<text x="140.0" y="423" text-anchor="middle" font-size="12.5">p50 3.4   p99 7.1   max 8.7 ms</text>
+<text x="140.0" y="442" text-anchor="middle" font-size="12.5"></text>
+<text x="140.0" y="461" text-anchor="middle" font-size="12.5">2 cores</text>
+<text x="140.0" y="480" text-anchor="middle" font-size="12.5">p50 5.1   p99 9.3   max 12.2 ms</text>
+<rect x="266" y="310" width="228" height="200" fill="#b5c1d3" stroke="#000" stroke-width="1.5"/>
+<text x="380.0" y="344" text-anchor="middle" font-size="18" font-weight="bold">tol 1e-4</text>
+<text x="380.0" y="366" text-anchor="middle" font-size="12.5">+ reseed_from_previous</text>
+<text x="380.0" y="385" text-anchor="middle" font-size="12.5"></text>
+<text x="380.0" y="404" text-anchor="middle" font-size="12.5">all cores</text>
+<text x="380.0" y="423" text-anchor="middle" font-size="12.5">p50 3.1   p99 4.9   max 6.7 ms</text>
+<text x="380.0" y="442" text-anchor="middle" font-size="12.5"></text>
+<text x="380.0" y="461" text-anchor="middle" font-size="12.5">2 cores</text>
+<text x="380.0" y="480" text-anchor="middle" font-size="12.5">p50 5.0   p99 7.5   max 9.8 ms</text>
+<rect x="506" y="310" width="228" height="200" fill="#d5b9a4" stroke="#000" stroke-width="1.5"/>
+<text x="620.0" y="344" text-anchor="middle" font-size="18" font-weight="bold">tol 1e-2</text>
+<text x="620.0" y="366" text-anchor="middle" font-size="12.5">default (exported now)</text>
+<text x="620.0" y="385" text-anchor="middle" font-size="12.5"></text>
+<text x="620.0" y="404" text-anchor="middle" font-size="12.5">all cores</text>
+<text x="620.0" y="423" text-anchor="middle" font-size="12.5">p50 3.3   p99 6.8   max 8.4 ms</text>
+<text x="620.0" y="442" text-anchor="middle" font-size="12.5"></text>
+<text x="620.0" y="461" text-anchor="middle" font-size="12.5">2 cores</text>
+<text x="620.0" y="480" text-anchor="middle" font-size="12.5">p50 5.0   p99 9.1   max 11.6 ms</text>
+<rect x="746" y="310" width="228" height="200" fill="#b3c6ad" stroke="#000" stroke-width="1.5"/>
+<text x="860.0" y="344" text-anchor="middle" font-size="18" font-weight="bold">tol 1e-2</text>
+<text x="860.0" y="366" text-anchor="middle" font-size="12.5">+ reseed_from_previous</text>
+<text x="860.0" y="385" text-anchor="middle" font-size="12.5"></text>
+<text x="860.0" y="404" text-anchor="middle" font-size="12.5">all cores</text>
+<text x="860.0" y="423" text-anchor="middle" font-size="12.5">p50 2.9   p99 4.6   max 6.0 ms</text>
+<text x="860.0" y="442" text-anchor="middle" font-size="12.5"></text>
+<text x="860.0" y="461" text-anchor="middle" font-size="12.5">2 cores</text>
+<text x="860.0" y="480" text-anchor="middle" font-size="12.5">p50 4.8   p99 7.2   max 8.7 ms</text>
+<text x="30" y="548" text-anchor="start" font-size="12" fill="#444">Driving outcome is unchanged in every variant: path 22.75 to 22.88 m, track violation 0 m, 0 solver failures.</text>
+<text x="30" y="568" text-anchor="start" font-size="12" fill="#444">reseed_from_previous: the parallel solver's re-seed uses the previous step's actor plan, shifted, instead of a fresh rollout.</text>
+</svg>

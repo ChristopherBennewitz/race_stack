@@ -96,6 +96,7 @@ PYBIND11_MODULE(_core, m) {
       .def_property_readonly("steer_estimate", &ProgressMpc::steer_estimate)
       .def_property_readonly("horizon", &ProgressMpc::horizon)
       .def_property_readonly("control_dt", &ProgressMpc::control_dt)
+      .def_property_readonly("horizon_seconds", &ProgressMpc::horizon_seconds)
       .def_property_readonly("history_length", &ProgressMpc::history_length)
       .def_property_readonly("speed_max", &ProgressMpc::speed_max)
       .def_property_readonly("step_limits", &ProgressMpc::step_limits)

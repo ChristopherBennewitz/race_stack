@@ -872,13 +872,13 @@ static void ac4mpc_critic_acados_create_set_opts(ac4mpc_critic_solver_capsule* c
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_iter_max", &qp_solver_iter_max);
 
 
-    double qp_solver_tol_stat = 0.0001;
+    double qp_solver_tol_stat = 0.01;
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_tol_stat", &qp_solver_tol_stat);
-    double qp_solver_tol_eq = 0.0001;
+    double qp_solver_tol_eq = 0.01;
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_tol_eq", &qp_solver_tol_eq);
-    double qp_solver_tol_ineq = 0.0001;
+    double qp_solver_tol_ineq = 0.01;
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_tol_ineq", &qp_solver_tol_ineq);
-    double qp_solver_tol_comp = 0.0001;
+    double qp_solver_tol_comp = 0.01;
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_tol_comp", &qp_solver_tol_comp);
 
     int print_level = 0;

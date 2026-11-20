@@ -67,6 +67,7 @@ class ProgressMpc {
   const std::vector<std::array<double, 2>>& plan_frenet() const;
   int horizon() const;
   double control_dt() const;
+  double horizon_seconds() const;  // the time the stages span (stages grow along a graded horizon)
   int history_length() const;
   // Command limits baked into the OCP.
   double speed_max() const;

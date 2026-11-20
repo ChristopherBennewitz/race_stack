@@ -48,7 +48,7 @@ PYBIND11_MODULE(_ac4mpc, m) {
       .def(
           py::init([](const std::string& policy, const std::string& mode, double value_weight, int reinit_period,
                       double eval_correction, int eval_rollout, bool threads, int torch_threads,
-                      double track_spacing) {
+                      double track_spacing, bool reseed_from_previous, int actor_period, bool debug_compare_seeds) {
             Ac4Config cfg;
             cfg.mode = parse_mode(mode);
             cfg.value_weight = value_weight;
@@ -56,6 +56,10 @@ PYBIND11_MODULE(_ac4mpc, m) {
             cfg.eval_correction = eval_correction;
             cfg.eval_rollout = eval_rollout;
             cfg.threads = threads;
+            cfg.reseed_from_previous = reseed_from_previous;
+            cfg.actor_period = actor_period;
+            cfg.debug_compare_seeds = debug_compare_seeds;
+            if (actor_period < 1) throw std::invalid_argument("actor_period must be at least 1");
             cfg.torch_threads = torch_threads;
             cfg.track_spacing = track_spacing;
             if (reinit_period < 1) throw std::invalid_argument("reinit_period must be at least 1");
@@ -64,6 +68,7 @@ PYBIND11_MODULE(_ac4mpc, m) {
           py::arg("policy"), py::arg("mode") = "full", py::arg("value_weight") = 0.2, py::arg("reinit_period") = 5,
           py::arg("eval_correction") = 0.0, py::arg("eval_rollout") = 0, py::arg("threads") = true,
           py::arg("torch_threads") = 1, py::arg("track_spacing") = 0.1,
+          py::arg("reseed_from_previous") = false, py::arg("actor_period") = 1, py::arg("debug_compare_seeds") = false,
           "`policy`: TorchScript module from the sim repo's scripts/export_policy.py. `mode`: critic, actor or full.")
       .def(
           "set_track",
@@ -155,6 +160,10 @@ PYBIND11_MODULE(_ac4mpc, m) {
                                d["active_seconds"] = st.active_seconds;
                                d["parallel_seconds"] = st.parallel_seconds;
                                d["actor_seconds"] = st.actor_seconds;
+                               d["actor_controls"] = st.actor_controls;
+                               d["parallel_seed_controls"] = st.parallel_seed_controls;
+                               d["parallel_controls"] = st.parallel_controls;
+                               d["parallel_alt_controls"] = st.parallel_alt_controls;
                                return d;
                              })
       .def_property_readonly("steer_estimate", &Ac4Mpc::steer_estimate)

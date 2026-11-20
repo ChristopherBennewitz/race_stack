@@ -193,6 +193,8 @@ struct Branch {
   std::vector<int> indices;
   double cost = kInf, solver_seconds = 0.0, slack = 0.0, wall_seconds = 0.0;
   Vec first_guess;  // the warm start's first command, the fallback if every solve fails
+  Vec seed_controls;  // the guess's commands the solver started from
+  Vec alt_controls;   // debug_compare_seeds: the plan solved from the other seed
   int failures = 0, iterations = 0;
 };
 
@@ -418,6 +420,7 @@ class Worker {
     const int n = kHorizon;
     Branch b;
     b.first_guess.assign(guess.controls.begin(), guess.controls.begin() + 2);
+    b.seed_controls = guess.controls;
     b.refs.resize(static_cast<size_t>(n + 1) * kRefDim);
     b.indices.resize(n + 1);
     project(*track_, guess.states.data(), kStateDim, n + 1, in.prev, b.refs.data(), b.indices.data());
@@ -454,9 +457,22 @@ class Worker {
   }
 
   // The parallel solver: from the actor's rollout every `reinit_period` steps, else from its own last plan.
-  Branch parallel_branch(const StepInput& in, bool reseed, const Guess* rollout) {
+  // With `stale_seed` (the previous step's actor plan) a re-seed shifts that plan one step instead of rolling the actor
+  // out again, which takes the rollout off this branch's critical path.
+  Branch parallel_branch(const StepInput& in, bool reseed, const Guess* rollout, const Memory* stale_seed = nullptr) {
     Guess guess;
-    if (reseed || !memory_.valid) {
+    Vec alt_controls;
+    if (reseed && stale_seed && stale_seed->valid) {
+      if (s_->config.debug_compare_seeds) {  // the plan the default re-seed would have solved to (the QP starts cold)
+        Guess fresh;
+        std::vector<int> indices;
+        closed_loop(in, kHorizon, nullptr, 0, 1.0, fresh.states, fresh.controls, indices);
+        Branch other = solver_branch(in, fresh, false);
+        if (other.has_plan) alt_controls = other.controls;
+      }
+      shift(*stale_seed, guess.controls);
+      guess.states = simulate(in.x0.data(), guess.controls);
+    } else if (reseed || !memory_.valid) {
       if (rollout) {
         guess = *rollout;
       } else {
@@ -468,6 +484,7 @@ class Worker {
       guess.states = simulate(in.x0.data(), guess.controls);
     }
     Branch b = solver_branch(in, guess, true);
+    b.alt_controls = std::move(alt_controls);
     memory_.valid = b.has_plan;
     if (b.has_plan) {
       memory_.states = b.states;
@@ -475,6 +492,20 @@ class Worker {
       memory_.last_idx = b.indices[kHorizon];
       memory_.history = in.history;
     }
+    return b;
+  }
+
+  // The previous actor plan shifted one step and re-simulated from the measured state, as a candidate: no network
+  // rollout, one actor call for the new last command (`actor_period` > 1, between fresh rollouts).
+  Branch actor_branch_shifted(const StepInput& in, const Memory& previous) {
+    Branch b;
+    shift(previous, b.controls);
+    b.states = simulate(in.x0.data(), b.controls);
+    b.refs.resize(static_cast<size_t>(kHorizon + 1) * kRefDim);
+    b.indices.resize(kHorizon + 1);
+    project(*track_, b.states.data(), kStateDim, kHorizon + 1, in.prev, b.refs.data(), b.indices.data());
+    b.has_plan = true;
+    b.cost = ac4eval(in, b.states, b.controls);
     return b;
   }
 
@@ -607,6 +638,7 @@ struct Ac4Mpc::Impl {
   bool have_issued = false;
   std::array<double, 2> issued{};  // (speed, steer), the last command returned
   Memory chosen;                    // the plan the active solver continues from
+  Memory actor_memory;              // the previous step's actor rollout (for `reseed_from_previous`)
   int prev_idx = -1;
   long iteration = 0;
   double steer_estimate = 0.0;
@@ -654,6 +686,7 @@ struct Ac4Mpc::Impl {
 
   void forget_plans() {
     chosen.valid = false;
+    actor_memory.valid = false;
     if (parallel) parallel->memory().valid = false;
   }
 
@@ -675,6 +708,8 @@ struct Ac4Mpc::Impl {
     }
     out.have_parallel = out.have_actor = true;
     const bool reseed = iteration % cfg.reinit_period == 0;
+    const bool shifted_actor = cfg.actor_period > 1 && actor_memory.valid && iteration % cfg.actor_period != 0;
+    auto run_actor = [&] { return shifted_actor ? actor->actor_branch_shifted(in, actor_memory) : actor->actor_branch(in); };
     if (active_thread) {
       // Every branch on its own thread; the longest, the actor's, on this one.
       active_thread->submit([&] {
@@ -685,13 +720,14 @@ struct Ac4Mpc::Impl {
       });
       parallel_thread->submit([&] {
         const auto start = Clock::now();
-        out.parallel = parallel->parallel_branch(in, reseed, nullptr);
+        out.parallel = parallel->parallel_branch(in, reseed, nullptr,
+                                                 (cfg.reseed_from_previous || cfg.actor_period > 1) ? &actor_memory : nullptr);
         out.parallel.wall_seconds = seconds_since(start);
       });
       std::exception_ptr error;
       try {
         const auto start = Clock::now();
-        out.actor = actor->actor_branch(in);
+        out.actor = run_actor();
         out.actor.wall_seconds = seconds_since(start);
       } catch (...) {
         error = std::current_exception();
@@ -703,7 +739,7 @@ struct Ac4Mpc::Impl {
     }
     // One thread: the actor's rollout seeds both solvers.
     auto start = Clock::now();
-    out.actor = actor->actor_branch(in);
+    out.actor = run_actor();
     out.actor.wall_seconds = seconds_since(start);
     const Guess rollout{out.actor.states, out.actor.controls};
     start = Clock::now();
@@ -812,6 +848,13 @@ Command Ac4Mpc::step(const std::array<double, 6>& state, const double* steer) {
   in.prev = m.prev_idx = project(m.track, in.x0.data(), kStateDim, 1, m.prev_idx, nullptr, nullptr);
 
   Impl::Branches branches = m.run_branches(in);
+  if (branches.have_actor && branches.actor.has_plan) {
+    m.actor_memory.valid = true;
+    m.actor_memory.states = branches.actor.states;
+    m.actor_memory.controls = branches.actor.controls;
+    m.actor_memory.last_idx = branches.actor.indices[kHorizon];
+    m.actor_memory.history = in.history;
+  }
 
   Ac4Stats& stats = m.stats;
   stats.failures += branches.active.failures + branches.parallel.failures;
@@ -823,6 +866,10 @@ Command Ac4Mpc::step(const std::array<double, 6>& state, const double* steer) {
   stats.active_seconds = branches.active.wall_seconds;
   stats.parallel_seconds = branches.parallel.wall_seconds;
   stats.actor_seconds = branches.actor.wall_seconds;
+  stats.actor_controls = branches.have_actor ? branches.actor.controls : std::vector<double>{};
+  stats.parallel_seed_controls = branches.have_parallel ? branches.parallel.seed_controls : std::vector<double>{};
+  stats.parallel_controls = branches.have_parallel && branches.parallel.has_plan ? branches.parallel.controls : std::vector<double>{};
+  stats.parallel_alt_controls = branches.have_parallel ? branches.parallel.alt_controls : std::vector<double>{};
 
   // The cheapest candidate that has a plan; ties go to the first.
   const Branch* chosen = nullptr;

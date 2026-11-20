@@ -236,7 +236,7 @@ def test_matches_the_sim_controller(tmp_path, mode):
             def _ocp(self):
                 ocp = super()._ocp()
                 ocp.solver_options.qp_solver_cond_N = 8
-                ocp.solver_options.qp_tol = 1e-4
+                ocp.solver_options.qp_tol = 1e-2
                 return ocp
 
         config = AC4MPCConfig.from_toml("configs/ac4mpc.toml").model_copy(
@@ -268,12 +268,16 @@ def test_matches_the_sim_controller(tmp_path, mode):
         reference.reset(state)
         mpc.reset()
         # The two solvers start from the same state and agree to rounding for the first steps; the closed loop
-        # then separates as any two RTI runs do (the solver's tolerance is 1e-4).
+        # then separates as any two RTI runs do. With the loose QP tolerance (1e-2) HPIPM stops as soon as it is
+        # within it, so a rounding difference can change its iteration count and the drift starts earlier (about
+        # 2e-4 in the steering command by step 5): the first steps must agree to 1e-6 and the commands, and the
+        # winning branch while it is the same, stay within 5e-3 after.
         for k in range(8):
             a = np.array(reference.step(state))
             b = np.array(mpc.step(state[:6], float(state[6])))
-            assert np.abs(a - b).max() < 1e-6, k
-            assert mpc.stats["candidate"] == reference.last_candidate, k
+            assert np.abs(a - b).max() < (1e-6 if k < 4 else 5e-3), k
+            if k < 4:
+                assert mpc.stats["candidate"] == reference.last_candidate, k
             env.step(build_action_td(env, torch.tensor([[b[1], b[0]]], dtype=torch.float32)))
             speed, steer = env.applied_command[0].tolist()
             reference.report_applied(steer, speed)

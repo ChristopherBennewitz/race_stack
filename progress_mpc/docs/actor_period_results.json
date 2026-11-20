@@ -1,0 +1,201 @@
+{
+ "_about": "AC4MPC (mode full, qp_tol 1e-2, cond_N 8), laptop pinned to 2 cores (taskset 0,1), 8 starts x 300 steps (first 20 dropped for timing). Variants: default; reseed = reseed_from_previous; actor_period k = fresh actor rollout every k-th step, otherwise the previous actor plan shifted and re-simulated. 'default (nudged 1e-7)' is the default with the start state nudged by 1e-7: the noise floor of the closed loop. shadow = commands of the variant vs the default when both see the same measured states and applied commands. Used by actor_period_plots.py.",
+ "starts": [
+  10,
+  50,
+  90,
+  130,
+  170,
+  210,
+  250,
+  290
+ ],
+ "timing": {
+  "default": {
+   "p50": 4.680348007241264,
+   "p99": 8.743684593500804,
+   "max": 10.100041996338405
+  },
+  "reseed": {
+   "p50": 4.659622507460881,
+   "p99": 6.426192890066887,
+   "max": 7.315700990147889
+  },
+  "actor_period 2": {
+   "p50": 4.380054997454863,
+   "p99": 6.88178886732203,
+   "max": 8.094151999102905
+  },
+  "actor_period 3": {
+   "p50": 3.92675800685538,
+   "p99": 6.825537492113655,
+   "max": 9.53882999601774
+  },
+  "actor_period 5": {
+   "p50": 3.7443135006469674,
+   "p99": 6.561331717966824,
+   "max": 10.893408994888887
+  },
+  "default (nudged 1e-7)": {
+   "p50": 4.655654993257485,
+   "p99": 8.356545351125536,
+   "max": 10.690985000110231
+  }
+ },
+ "paths": {
+  "default": [
+   22.788,
+   23.649,
+   23.213,
+   21.167,
+   22.235,
+   22.307,
+   23.558,
+   24.143
+  ],
+  "reseed": [
+   23.482,
+   24.098,
+   23.462,
+   21.087,
+   21.052,
+   21.692,
+   23.319,
+   23.796
+  ],
+  "actor_period 2": [
+   22.79,
+   23.916,
+   23.258,
+   21.045,
+   21.586,
+   21.775,
+   23.095,
+   22.939
+  ],
+  "actor_period 3": [
+   23.311,
+   23.686,
+   23.214,
+   21.203,
+   21.796,
+   20.758,
+   23.177,
+   23.549
+  ],
+  "actor_period 5": [
+   23.076,
+   23.38,
+   22.717,
+   20.84,
+   22.482,
+   20.343,
+   23.619,
+   24.273
+  ],
+  "default (nudged 1e-7)": [
+   23.275,
+   23.604,
+   23.243,
+   20.894,
+   21.253,
+   21.71,
+   23.386,
+   23.459
+  ]
+ },
+ "branches": {
+  "default": {
+   "active": 2.401671415625,
+   "parallel": 2.8669801857142856,
+   "actor": 3.3897036714285713
+  },
+  "reseed": {
+   "active": 2.823436209375,
+   "parallel": 2.3971133183035715,
+   "actor": 3.470498236160714
+  },
+  "actor_period 2": {
+   "active": 2.458568454017857,
+   "parallel": 2.3365446558035714,
+   "actor": 2.003453662053571
+  },
+  "actor_period 3": {
+   "active": 2.378533023214286,
+   "parallel": 2.3068362156249997,
+   "actor": 1.3527569665178572
+  },
+  "actor_period 5": {
+   "active": 2.4211797933035717,
+   "parallel": 2.3610519767857143,
+   "actor": 1.0120885665178572
+  },
+  "default (nudged 1e-7)": {
+   "active": 2.3824919312499997,
+   "parallel": 2.8137455602678574,
+   "actor": 3.459635033482143
+  }
+ },
+ "wins": {
+  "default": {
+   "actor": 1596,
+   "mpc_active": 364,
+   "mpc_parallel": 440
+  },
+  "reseed": {
+   "actor": 1561,
+   "mpc_active": 350,
+   "mpc_parallel": 489
+  },
+  "actor_period 2": {
+   "actor": 1526,
+   "mpc_active": 401,
+   "mpc_parallel": 473
+  },
+  "actor_period 3": {
+   "actor": 1537,
+   "mpc_active": 395,
+   "mpc_parallel": 468
+  },
+  "actor_period 5": {
+   "actor": 1596,
+   "mpc_active": 369,
+   "mpc_parallel": 435
+  },
+  "default (nudged 1e-7)": {
+   "actor": 1544,
+   "mpc_active": 421,
+   "mpc_parallel": 435
+  }
+ },
+ "shadow": {
+  "reseed": {
+   "dsteer_mean": 0.009111692705360738,
+   "dsteer_p99": 0.13026449868781098,
+   "dspeed_mean": 0.014929945531343651,
+   "dspeed_p99": 0.19960500455615773,
+   "same_winner_pct": 80.44642857142857
+  },
+  "actor_period 2": {
+   "dsteer_mean": 0.011798611767017698,
+   "dsteer_p99": 0.14796264226069183,
+   "dspeed_mean": 0.02068607675778464,
+   "dspeed_p99": 0.1998390314490523,
+   "same_winner_pct": 78.03571428571429
+  },
+  "actor_period 3": {
+   "dsteer_mean": 0.01410203868852859,
+   "dsteer_p99": 0.15168302776396111,
+   "dspeed_mean": 0.02537295014070753,
+   "dspeed_p99": 0.1999999934504078,
+   "same_winner_pct": 75.84821428571429
+  },
+  "actor_period 5": {
+   "dsteer_mean": 0.01573636966725079,
+   "dsteer_p99": 0.15518786394587533,
+   "dspeed_mean": 0.033563703656034026,
+   "dspeed_p99": 0.3038330240427304,
+   "same_winner_pct": 75.0
+  }
+ }
+}

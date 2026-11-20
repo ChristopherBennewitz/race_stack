@@ -9,6 +9,7 @@
 
 #include "acados_solver_progress_mpc.h"
 #include "mpc_config.h"
+#include "mpc_stages.h"
 #include "mpc_step.h"
 
 namespace progress_mpc {
@@ -23,6 +24,11 @@ constexpr int kAugDim = kStateDim + kAugExtra;     // the OCP state adds the las
 static_assert(kVehicleDim == kVehicleStateDim, "the generated model's vehicle state changed");
 static_assert(kAugDim == PROGRESS_MPC_NX, "the generated OCP does not match the exported step function");
 static_assert(kHorizon == PROGRESS_MPC_N, "horizon mismatch between mpc_config.h and the acados code");
+
+// Each stage's acados parameters: its centerline reference, then (graded horizon) its length and slew interval.
+constexpr int kParamDim = kRefDim + kStageDim;
+static_assert(kParamDim == PROGRESS_MPC_NP, "the generated OCP's stage parameters do not match mpc_stages.h");
+constexpr bool kGraded = kStageDim > 0;
 
 enum StateIdx { kX = 0, kY = 1, kYaw = 2, kVx = 3, kVy = 4, kYawRate = 5, kSteer = 6 };
 
@@ -86,9 +92,9 @@ struct ProgressMpc::Impl {
   Stats stats;
   std::vector<std::array<double, 2>> plan_world, plan_frenet;
 
-  // The model over one control period: z' = F(z, u).
-  void model(const double* z, const double* u, double* z_next) const {
-    const double* arg[2] = {z, u};
+  // The model over stage `stage` (one control period on a uniform horizon): z' = F(z, u, stage parameters).
+  void model(const double* z, const double* u, double* z_next, int stage = 0) const {
+    const double* arg[3] = {z, u, kGraded ? &kStageParams[stage * kStageDim] : nullptr};
     double* res[1] = {z_next};
     casadi_int iw[F_step_SZ_IW + 1];
     double w[F_step_SZ_W + 1];
@@ -100,7 +106,7 @@ struct ProgressMpc::Impl {
     Vec states(static_cast<size_t>(n + 1) * kStateDim);
     std::copy(x0, x0 + kStateDim, states.begin());
     for (int k = 0; k < n; ++k)
-      model(&states[k * kStateDim], &controls[2 * k], &states[(k + 1) * kStateDim]);
+      model(&states[k * kStateDim], &controls[2 * k], &states[(k + 1) * kStateDim], k);
     return states;
   }
 
@@ -123,12 +129,32 @@ struct ProgressMpc::Impl {
     auto cmd = command_of(ap);
     const double target[2] = {0.0, 2.0};
     for (int k = 0; k < kHorizon; ++k) {
-      for (int i = 0; i < 2; ++i) cmd[i] += clamp(target[i] - cmd[i], step_lo[i], step_hi[i]);
+      // The manager slews for the guaranteed part of the previous stage (a control period on a uniform horizon).
+      const double slew = kGraded ? kStageParams[k * kStageDim + 3] / kStageParams[3] : 1.0;
+      for (int i = 0; i < 2; ++i) cmd[i] += clamp(target[i] - cmd[i], slew * step_lo[i], slew * step_hi[i]);
       p.controls[2 * k] = cmd[0];
       p.controls[2 * k + 1] = cmd[1];
-      model(&p.states[k * kStateDim], cmd.data(), &p.states[(k + 1) * kStateDim]);
+      model(&p.states[k * kStateDim], cmd.data(), &p.states[(k + 1) * kStateDim], k);
     }
     return p;
+  }
+
+  // Graded horizon: the previous plan moved one control period earlier in time. Each command is held for its
+  // stage, so a stage's new command is the time average of the old plan over the window the stage now covers
+  // (the last command held past the end).
+  void resample_controls(Vec& controls) const {
+    auto integral = [&](double t, int channel) {  // of the old piecewise-constant plan from 0 to t
+      const double end = kStageStart[kHorizon];
+      const double inside = std::min(t, end);
+      double sum = 0.0;
+      for (int j = 0; j < kHorizon && kStageStart[j] < inside; ++j)
+        sum += warm.controls[2 * j + channel] * (std::min(kStageStart[j + 1], inside) - kStageStart[j]);
+      return sum + warm.controls[2 * (kHorizon - 1) + channel] * (t - inside);
+    };
+    for (int k = 0; k < kHorizon; ++k)
+      for (int c = 0; c < 2; ++c)
+        controls[2 * k + c] = (integral(kStageStart[k + 1] + kControlDt, c) - integral(kStageStart[k] + kControlDt, c)) /
+                              kStageDt[k];
   }
 
   // The previous controls shifted by one step and re-simulated from x0. Re-simulating keeps the warm start
@@ -137,14 +163,18 @@ struct ProgressMpc::Impl {
     if (!have_warm) return rollout_guess(x0, ap);
     Plan p;
     p.controls = warm.controls;
-    std::copy(warm.controls.begin() + 2, warm.controls.end(), p.controls.begin());  // last command is repeated
+    if (kGraded) {
+      resample_controls(p.controls);
+    } else {
+      std::copy(warm.controls.begin() + 2, warm.controls.end(), p.controls.begin());  // last command is repeated
+    }
     p.states = simulate(x0.data(), p.controls);
     return p;
   }
 
   // Projects planned positions onto the centerline; later stages may only advance, by a bounded step.
   Vec references(const Vec& states) {
-    Vec refs(static_cast<size_t>(kHorizon + 1) * kRefDim);
+    Vec refs(static_cast<size_t>(kHorizon + 1) * kParamDim);
     const int count = track.count;
     int idx = prev_idx;
     bool have_s = false;
@@ -174,7 +204,8 @@ struct ProgressMpc::Impl {
       if (have_s) s += track.length * std::nearbyint((s_prev - s) / track.length);
       s_prev = s;
       have_s = true;
-      double* r = &refs[k * kRefDim];
+      double* r = &refs[k * kParamDim];
+      for (int i = 0; i < kStageDim; ++i) r[kRefDim + i] = kStageParams[k * kStageDim + i];
       r[0] = track.center[idx][0];
       r[1] = track.center[idx][1];
       r[2] = track.tangent[idx][0];
@@ -196,7 +227,7 @@ struct ProgressMpc::Impl {
     ocp_nlp_constraints_model_set(config, dims, in, 0, "ubx", x0_aug.data());
     Vec x_k(kAugDim);
     for (int k = 0; k <= n; ++k) {
-      progress_mpc_acados_update_params(capsule, k, const_cast<double*>(&refs[k * kRefDim]), kRefDim);
+      progress_mpc_acados_update_params(capsule, k, const_cast<double*>(&refs[k * kParamDim]), kParamDim);
       std::copy(&guess.states[k * kStateDim], &guess.states[(k + 1) * kStateDim], x_k.begin());
       augmented_extras(ap.data(), kSteerHistory, kHistory, guess.controls.data(), k, &x_k[kStateDim]);
       ocp_nlp_out_set(config, dims, out, k, "x", x_k.data());
@@ -242,7 +273,7 @@ struct ProgressMpc::Impl {
     warm.states = simulate(solution.states.data(), warm.controls);
     have_warm = true;
     for (int k = 0; k <= kHorizon; ++k) {
-      const double* r = &refs[k * kRefDim];
+      const double* r = &refs[k * kParamDim];
       const double px = warm.states[k * kStateDim + kX], py = warm.states[k * kStateDim + kY];
       const double ox = px - r[0], oy = py - r[1];
       plan_world[k] = {px, py};
@@ -355,6 +386,7 @@ const std::vector<std::array<double, 2>>& ProgressMpc::plan_world() const { retu
 const std::vector<std::array<double, 2>>& ProgressMpc::plan_frenet() const { return impl_->plan_frenet; }
 int ProgressMpc::horizon() const { return kHorizon; }
 double ProgressMpc::control_dt() const { return kControlDt; }
+double ProgressMpc::horizon_seconds() const { return kStageStart[kHorizon]; }
 int ProgressMpc::history_length() const { return kHistory; }
 double ProgressMpc::speed_max() const { return kSpeedMax; }
 std::array<double, 3> ProgressMpc::step_limits() const { return {kSteerStep, kSpeedStepUp, kSpeedStepDown}; }

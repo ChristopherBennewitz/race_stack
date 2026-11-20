@@ -28,6 +28,10 @@ struct Ac4Config {
   int reinit_period = 5;          // steps between re-seeding the parallel solver with the actor's rollout
   double eval_correction = 0.0;   // alpha: actor feedback on a candidate's commands in ac4eval
   int eval_rollout = 0;           // R: actor steps past the horizon in ac4eval
+  bool reseed_from_previous = false;  // re-seed the parallel solver from the previous step's actor plan, shifted, not a fresh rollout (no rollout on its critical path)
+  int actor_period = 1;               // fresh actor rollout every this many steps; in between the previous actor plan is shifted and
+                                      // re-simulated from the measured state (implies reseed_from_previous)
+  bool debug_compare_seeds = false;   // diagnostics: on a re-seed step also solve from a fresh actor rollout (see parallel_alt_controls)
   bool threads = true;            // branches on their own threads (actor and full modes)
   int torch_threads = 1;          // libtorch's intra-op threads per branch; one is fastest for these small networks
   double track_spacing = 0.1;     // see ProgressMpc
@@ -37,6 +41,10 @@ struct Ac4Stats : Stats {
   std::string candidate;                   // the branch that won: mpc_active, mpc_parallel, actor, or fallback
   double cost_active = 0.0, cost_parallel = 0.0, cost_actor = 0.0;  // ac4eval of each candidate (inf: none)
   double actor_seconds = 0.0, active_seconds = 0.0, parallel_seconds = 0.0;  // wall time of each branch
+  // Diagnostics: the actor candidate's commands this step, and the commands the parallel solver was seeded with
+  // ((horizon, 2) as steer, speed; empty without the actor).
+  std::vector<double> actor_controls, parallel_seed_controls, parallel_controls;  // parallel_controls: its solved plan
+  std::vector<double> parallel_alt_controls;  // debug_compare_seeds: its plan when seeded with a fresh rollout instead
 };
 
 class Ac4Mpc {

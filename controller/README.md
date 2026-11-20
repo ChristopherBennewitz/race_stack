@@ -245,6 +245,9 @@ markers, a different solver. It needs `progress_mpc` built with libtorch and `ge
 - `ac4mpc_mode` (`full`): `critic`, `actor` or `full`. `ac4mpc_value_weight` (0.2): the critic's weight in the QP (the paper's beta).
   `ac4mpc_reinit_period` (5): steps between re-seeding the parallel solver with the actor's rollout. `ac4mpc_eval_correction` (0.0) and
   `ac4mpc_eval_rollout` (0): actor feedback and actor steps past the horizon when a candidate plan is scored.
+  `ac4mpc_reseed_from_previous` (False): re-seed the parallel solver from the previous step's actor plan, shifted by one step, instead of a fresh
+  rollout. Every `reinit_period`-th step otherwise runs the rollout and then the solve in series, a periodic solve-time peak; this removes it
+  (laptop: step p99 6.6 -> 4.2 ms, max 8.6 -> 5.4 ms, same path length and winners).
 - `/controller/diagnostics` adds `wins_mpc_active`, `wins_mpc_parallel`, `wins_actor` and `wins_fallback`: how many steps each branch's plan was applied;
   the RViz text shows the branch that won the last step.
 

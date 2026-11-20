@@ -56,11 +56,30 @@ when exporting. In the sim (1200 steps, the exported settings) the second differ
 (steering) and 50 % (speed) with no loss of progress; that was a single run, not a tuned optimum. `configs/ac4mpc.toml` has
 the terms at 0.
 
+## Graded horizon
+
+A config that sets `horizon_seconds` (sim repo: `configs/progress_mpc_graded.toml`, class `GradedProgressMPC`) keeps the
+40 stages but lets them grow: stage `k` lasts `control_dt * r^k`, with `r` chosen so they add up to `horizon_seconds`
+(1.75 s: 25 ms growing to 70 ms). Stage 0 stays one control period, so `plan_world[1]` is still where the car should be
+one period later. The model step takes the stage length as a parameter, the rate and second-difference costs scale with it,
+and the warm start is the old plan moved one period earlier and averaged onto the new stages. Export it like any other:
+
+```bash
+uv run --project ../f1tenth_parallel_sim python progress_mpc/scripts/export_acados.py \
+    --sim-repo ../f1tenth_parallel_sim --config configs/progress_mpc_graded.toml
+```
+
+`generated/mpc_stages.h` carries the time grid (`kStageDim` is 0 for the uniform export) and `mpc.horizon_seconds` reports it.
+The C++ builds against either export. Do not take a longer reach for granted: `scripts/benchmark_track.py --round 4`
+(hangar track, 10 starts x 60 s, the exporter's default settings, latency compensation on) crashed 5/10 with the uniform
+1.0 s horizon, 3/10 with a graded 1.25 s, and 7/10, 6/10 and 9/10 with a graded 1.5, 1.75 and 2.0 s; a uniform 60 x 25 ms
+(1.5 s) crashed 7/10. In this OCP the extra reach does not help, graded or not. One round, 10 starts, no repeat.
+
 ## Solve time
 
 One SQP-RTI iteration costs ~7.6 ms on a fast laptop, ~26 ms on the car's NUC (the control period is 25 ms). 97 % of it is
 the QP inside that iteration, not the model. The export therefore sets `qp_solver_cond_N = 8` (the same QP with partial
-condensing, identical commands) and `qp_tol = 1e-4` (HPIPM stops at a looser tolerance). Measured on the sim's track with
+condensing, identical commands) and `qp_tol = 1e-2` (HPIPM stops at a looser tolerance). Measured on the sim's track with
 the model as the plant over 8 starts x 250 steps: solve 7.6 -> 1.4 ms, 0 solver failures, same path length and no track
 violations; the C++ controller solves in ~1.5 ms. Changing these is an export flag (`--qp-cond-n`, `--qp-tol`, 0 keeps the
 sim's default); capping the QP iterations or HPIPM `SPEED_ABS` changed the behaviour and are not used. Every variant that

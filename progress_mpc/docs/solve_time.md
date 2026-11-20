@@ -106,3 +106,31 @@ Considered but not changed, in case the solve time is ever a problem again:
 - **Compile flags**: the large generated file `progress_mpc_dyn_disc_phi_fun_jac_hess.c` (1.3 MB, an exact dynamics
   Hessian that the OCP is configured not to use, `exact_hess_dyn = False`) makes a clean build take ~6.5 min on the NUC (22 s with `-O3` on the
   laptop, 11 s at `-O1`, 1 s at `-O0`). Incremental builds do not recompile it.
+
+## `qp_tol` 1e-2 as the export default, AC4MPC step times (2026-11-15)
+
+The export default is now `qp_tol = 1e-2` (was 1e-4); `qp_solver_cond_N` stays 8. Solver-only time of the plain MPC with
+`cond_N` 8, 8 starts x 250 steps, laptop: tol 1e-5 1.39 ms, 1e-4 1.37, 1e-3 1.33, 1e-2 1.27, against 4.17 ms with the
+default tolerance of 1e-6 and 8.05 ms with neither setting. Partial condensing is what matters; the tolerance below 1e-5
+changes little.
+
+AC4MPC (`full`, the real checkpoint, 8 starts x 300 steps, mean of two repetitions, laptop; the NUC7 is ~3.5x slower):
+
+| | p50 | p99 | max | path (m) | violation |
+|---|---|---|---|---|---|
+| tol 1e-4 | 3.4 ms | 7.1 | 8.7 | 22.75 | 0 |
+| tol 1e-2 | 3.3 | 6.8 | 8.4 | 22.88 | 0 |
+| tol 1e-4 + `reseed_from_previous` | 3.1 | 4.9 | 6.7 | 22.75 | 0 |
+| tol 1e-2 + `reseed_from_previous` | 2.9 | 4.6 | 6.0 | 22.75 | 0 |
+
+The tolerance alone saves ~0.1 ms at p50. The larger effect on the tail is `reseed_from_previous` (`Ac4Config`,
+launch arg `ac4mpc_reseed_from_previous`, off by default): on every `reinit_period`-th step the parallel solver otherwise
+rolls the actor out again and then solves, in series (parallel branch 4.9 ms against 2.6 ms on the other steps). With the
+option it re-seeds from the previous step's actor plan shifted by one step, so the step takes the same time every time.
+
+Test: `test_matches_the_sim_controller` compares the C++ AC4MPC with the sim's Python one step by step. With the loose
+tolerance HPIPM stops as soon as it is within it, so a rounding difference changes its iteration count and the two
+controllers separate earlier (2e-4 in steering by step 5): the first 4 steps must agree to 1e-6, after that 5e-3.
+Exported with `export_ac4mpc.py` (only `ac4mpc_config.h` and the four HPIPM tolerances in the solver file changed). The plain
+MPC's `generated/` got the same five-line change by hand, because `export_acados.py` imports
+`mpc.graded_progress_mpc`, which the sim repo no longer has; re-export it once that is resolved.

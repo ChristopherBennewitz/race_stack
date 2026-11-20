@@ -40,6 +40,10 @@ VARIANTS = {
     "cond_N 20": {"qp_solver_cond_N": 20},
     "cond_N 5 + tol 1e-4": {"qp_solver_cond_N": 5, "qp_tol": 1e-4},
     "cond_N 8 + tol 1e-4": {"qp_solver_cond_N": 8, "qp_tol": 1e-4},  # the one exported
+    "cond_N 8 + tol 1e-5": {"qp_solver_cond_N": 8, "qp_tol": 1e-5},
+    "cond_N 8 + tol 1e-3": {"qp_solver_cond_N": 8, "qp_tol": 1e-3},
+    "cond_N 8 + tol 1e-2": {"qp_solver_cond_N": 8, "qp_tol": 1e-2},
+    "cond_N 8 + tol 1e-1": {"qp_solver_cond_N": 8, "qp_tol": 1e-1},
     "cond_N 5 + tol 1e-3": {"qp_solver_cond_N": 5, "qp_tol": 1e-3},
     "cond_N 5 + tol 1e-4 + SPEED": {"qp_solver_cond_N": 5, "qp_tol": 1e-4, "hpipm_mode": "SPEED"},
 }

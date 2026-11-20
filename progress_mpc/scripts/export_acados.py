@@ -10,6 +10,7 @@ Writes into `progress_mpc/generated/`:
     acados/         acados' generated solver (model, cost and constraint functions, capsule API)
     mpc_step.{c,h}  CasADi's C code for one control period of the model, used for warm starts
     mpc_config.h    the sizes and car constants the C++ wrapper needs
+    mpc_stages.h    the horizon's time grid (graded stage lengths and per-stage parameters; empty for a uniform one)
 
 Everything the OCP bakes in (car, horizon, weights, command limits) is fixed by this export; the track
 is a runtime input. Re-run it, and commit the result, whenever the sim repo's MPC or car config changes.
@@ -20,8 +21,12 @@ cut it 5.5x (timed on the sim's track with the same model as the plant, 8 start 
 
     --qp-cond-n 8     partial condensing: the 40 stages are condensed into 8 blocks. The same QP solved with
                       different linear algebra: commands agree to 1e-11, ~35 % faster.
-    --qp-tol 1e-4     HPIPM stops at a looser tolerance (acados default 1e-6). With one RTI iteration the plan is
+    --qp-tol 1e-2     HPIPM stops at a looser tolerance (acados default 1e-6). With one RTI iteration the plan is
                       approximate anyway; path length 17.34 m against 17.37 m, no track violations.
+
+Graded horizon. A config that sets `horizon_seconds` (the sim repo's `configs/progress_mpc_graded.toml`) exports the
+graded controller: the same number of stages, each longer than the one before, so the horizon spans that many seconds.
+The solver, `mpc_step.c` (which then takes the stage parameters as a third input) and `mpc_stages.h` carry the grid.
 
 Track clearance and speed. The sim's MPC keeps the centre of gravity `collision radius + track_margin` (0.284 + 0.2 = 0.484 m)
 inside the track limits, tuned for wider sim tracks. On the 1.7 m wide hangar track that leaves a corridor of 0.7 m on
@@ -59,9 +64,9 @@ def main() -> None:
 
         import casadi as ca
 
-        from mpc.progress_mpc import ProgressMPC
+        from mpc.graded_progress_mpc import progress_controller_class
 
-        class Exported(ProgressMPC):
+        class Exported(progress_controller_class(config)):
             """The sim's OCP with this package's QP solver settings."""
 
             def _ocp(self):
@@ -81,6 +86,7 @@ def main() -> None:
         generator.add(mpc._step_fn)
         generator.generate(f"{out}/")
         common.write_header(out / "mpc_config.h", common.constants(mpc, config, args))
+        common.write_stages(out / "mpc_stages.h", mpc, config)
 
     print(f"Exported to {out}")
 
