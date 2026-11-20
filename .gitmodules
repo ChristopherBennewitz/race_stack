@@ -18,3 +18,14 @@
 	path = sensors/vesc
 	url = git@github.com:ChristopherBennewitz/vesc.git
 	branch = ros2-humble
+[submodule "system_identification/lateral/on_track_sysid"]
+	path = system_identification/lateral/on_track_sysid
+	url = git@github.com:ChristopherBennewitz/On-Track-SysID.git
+[submodule "utilities/libraries/forza_config"]
+	path = utilities/libraries/forza_config
+	url = git@github.com:ChristopherBennewitz/forza_config.git
+	branch = main
+[submodule "controller/forzaeth_mpc"]
+	path = controller/forzaeth_mpc
+	url = git@github.com:ChristopherBennewitz/forzaeth_mpc.git
+	branch = main

@@ -36,9 +36,12 @@ Then you can run the global planner:
 ros2 launch stack_master planner_launch.xml map_name:=<map name of choice>
 ```
  - `<map_name_of_choice` must be the name of any prerecorded map. If it is ommited the map called `latest` will be used.
+ - `racecar_version:=NUCx` defaults to `$RACECAR_VERSION`. Mass, `v_max` and the curvature limit (`1 / min_radius_curv_m`) come from `config/<racecar_version>/car_model.yaml` (required), everything else from `config/global_planner/racecar_f110.ini`.
 
 A GUI will popup showing you the map and the extracted centerline. If you are satisfied you can close it to start the global raceline generation. If you have no monitor it starts automatically. Then two GUIs will be shown, and within them a slider can be used to select the velocity scaling and overtaking sectors. 
 Be careful as once a sector is chosen it cannot be further subdivided. 
+
+Without a display (no `DISPLAY` set) the plots are skipped and a single sector over the whole track is written for both speed scaling and overtaking. Add `headless:=true` to also skip rviz.
 
 ### Base System
 ```shell
@@ -50,19 +53,19 @@ ros2 launch stack_master base_system_launch.xml map_name:=<name of mapped track>
 
 ### Time trials 
 ```shell
-ros2 launch stack_master time_trials_launch.xml racecar_version:=<NUCx used> LU_table:=<Look-Up Table name> ctrl_algo:=<control algorithm> 
+ros2 launch stack_master time_trials_launch.xml racecar_version:=<NUCx used> ctrl_algo:=<control algorithm> 
 ```
   - `<NUCx>` depends on which car you are using. Parameters are available for NUC2, NUC5, NUC6, SIM (the latter represents a dummy car). If you omit this the one set in base_system is used. 
-  - `<Look-Up Table name>` is the name of the Look-Up Table you want to use. It must belong to the list of Look-Up Tables available in the `systm_identification/steering_lookup/cfg` folder.
-  - `<control algorithm>` is the control algorithm you want to use. Current possibilities are MAP / PP.
+  - The MAP controller uses the steering Look-Up Table `stack_master/config/<NUCx>/LUT/<floor>/default.csv`, where `floor` is set when launching base_system.
+  - `<control algorithm>` is the control algorithm you want to use. Current possibilities are MAP / PP / STMPC / KMPC (the MPCs need acados, see `controller/forzaeth_mpc`).
 
 ### Head to Head
 ```shell
-ros2 launch stack_master head_to_head_launch.xml racecar_version:=<NUCx used> LU_table:=<Look-Up Table name> ctrl_algo:=<control algorithm> overtake_mode:=spliner
+ros2 launch stack_master head_to_head_launch.xml racecar_version:=<NUCx used> ctrl_algo:=<control algorithm> overtake_mode:=spliner
 ```
 - `<NUCx>` depends on which car you are using. Parameters are available for NUC2, NUC5, NUC6, SIM (the latter represents a dummy car).
-- `<Look-Up Table name>` is the name of the Look-Up Table you want to use. It must belong to the list of Look-Up Tables available in the `systm_identification/steering_lookup/cfg` folder.
-- `<control algorithm>` is the control algorithm you want to use. Current possibilities are MAP / PP.
+- The MAP controller uses the steering Look-Up Table `stack_master/config/<NUCx>/LUT/<floor>/default.csv`, where `floor` is set when launching base_system.
+- `<control algorithm>` is the control algorithm you want to use. Current possibilities are MAP / PP / STMPC / KMPC (the MPCs need acados, see `controller/forzaeth_mpc`).
 - `<overtake_mode>` is the mode you want to use for overtaking. `spliner` is the only current possibility.
 
 ### Simulation with Opponent
@@ -71,12 +74,17 @@ It is possible to add a steerable opponent to the simulation by changing the fol
     # opponent parameters
     num_agent: 2
 
-    # opp starting pose on map
+    # opp spawn distance along the raceline ahead of the ego [m]
+    opp_spawn_s: 5.0
+
+    # opp starting pose on map (fallback until the raceline arrives)
     sx1: 2.0
     sy1: 0.5
     stheta1: 0.0
 ```
-and then launching the the simulator normally, eg:
+Once the global raceline is published, the opponent is placed on it `opp_spawn_s` meters ahead of the ego. `sx1`/`sy1`/`stheta1` are only used until then. At most one opponent is supported (`num_agent` is 1 or 2).
+
+Then launch the simulator normally, eg:
 ```shell
 ros2 launch stack_master base_system_launch.xml map_name:=glc_ot_ez sim:=true
 ```

@@ -1,20 +1,22 @@
-#! /bin/bash
-# Optional PyTorch install for the RL controller. Runs at `docker compose build`
-# (make build RL=cpu|gpu), or by hand inside a container / on a host.
-# Usage: torch_setup.sh <none|cpu|gpu> [platform: x86|arm|jet]
-set -e
+# PyTorch for the RL controller and On-Track-SysID. Runs at `docker compose build` (the Dockerfile calls it without
+# arguments: CPU torch), or by hand inside a container / on a host.
+# Usage: torch_setup.sh [none|cpu|gpu] [platform: x86|arm|jet]
+set -eo pipefail
 
-MODE="${1:-none}"
+MODE="${1:-cpu}"
 PLATFORM="${2:-x86}"
 UTILS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 case "$MODE" in
     none)
-        echo "RL disabled: skipping PyTorch install."
+        echo "Skipping the PyTorch install."
         exit 0
         ;;
     cpu)
-        pip3 install -r "$UTILS_DIR/torch_cpu_req.txt"
+        # On x86 take torch from the CPU index, so pip does not pull the CUDA wheels.
+        # torch>=2.11 requires a setuptools newer than the 58.2.0 that ROS humble needs.
+        if [[ "$(uname -m)" == "x86_64" ]]; then TORCH_INDEX="--index-url https://download.pytorch.org/whl/cpu"; fi
+        pip3 install "torch<2.11" $TORCH_INDEX
         ;;
     gpu)
         if [[ "$PLATFORM" == "jet" ]]; then
@@ -32,7 +34,7 @@ case "$MODE" in
         fi
         ;;
     *)
-        echo "Error: unknown RL mode '$MODE' (expected none, cpu or gpu)." >&2
+        echo "Error: unknown mode '$MODE' (expected none, cpu or gpu)." >&2
         exit 1
         ;;
 esac

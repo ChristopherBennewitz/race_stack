@@ -18,7 +18,7 @@ Setting up a static ip at this moment will allow you to set extra computers (tha
 
 ## Build
 **Note**: docker is assumed to be installed and runnable without sudo (e.g. on Linux see [Post-Installation steps](https://docs.docker.com/engine/install/linux-postinstall/)).
-The build process is managed by the Makefile. The command `default_setup` creates a cache folder (`setup_cache`) and a .env file (`export_env`) before it builds the container (`build`). It also detects if you are on a x86 or arm machine and builds the correct image. 
+The build process is managed by the Makefile. The command `default_setup` creates a .env file (`export_env`) before it builds the container (`build`). The workspace (`build`, `install`, `log`) lives in a per-user Docker volume (`race_stack_ws_<USER>`) rather than on the host. `export_env` also detects the platform (x86, Apple ARM or Jetson) and writes it to `.env` (`PLATFORM`, plus `BASE_IMAGE` and `DOCKER_RUNTIME=nvidia` on a Jetson), so a single `race_stack` service builds the right image on every machine. Run `make export_env` again if you move the repository to a different machine. 
 
 `export_env` asks whether the machine uses VIO (`USE_VIO`, default `false`). With `USE_VIO=true` the image additionally builds librealsense, the `realsense2_camera` ROS wrapper and `basalt_ros`, and the launch files start the RealSense D455 camera (with the sensors in `teleop_launch.xml`) and Basalt VIO (in `state_estimation_launch.xml`). With `false` all of this is skipped. Changing the value requires `make build` again.
 
@@ -42,7 +42,10 @@ You can now enjoy a terminal with GUI forwarding! If you need multiple GUI appli
 
 ## How to use (docker container)
 **Set up X forwarding and launch the container**
-To get GUI application properly forwarded, run the additional setup script that sets up the xauth file for the container. The launch command does this automatically. If you are on an arm machine (such as a macbook) this step is omitted. It is recommended to use [this](https://github.com/ETH-PBL/remote-novnc) for display support. To launch the container you can then run:
+Launching the stack also launches a remote-novnc container from [here](https://github.com/ETH-PBL/remote-novnc). This can be used as a display in your browser under `http://localhost:21800`.This is usefull when you use an arm machine (such as a macbook). If you work with a car or another remote make sure to ssh with port forwarding: `ssh -L SOME_PORT:127.0.0.1:21800`. Then you can navigate to `http://localhost:SOME_PORT` in your browser to use the display of the car.
+
+
+Otherwise you can run the additional setup script that sets up the xauth file for the container. The launch command does this automatically. To launch the container you can then run:
 
 ```bash
 cd <race_stack folder>
@@ -50,10 +53,8 @@ make launch
 ```
 This spins up the container and runs some post installation steps. This is only done the first time and the next time the script will detect the correct container and restarts it. After the post installation finished you can run `make launch` again to attach a terminal to the container.
 
-
-
 ## How to use GUI applications with the container
-To have more information on how to use GUI applications with remote containers, please refer to the [GUI applications documentation](./README_GUI.md).
+To have more information on how to use GUI applications with remote containers, without using noVNC, please refer to the [GUI applications documentation](./README_GUI.md).
 
 ---
 [Go back to the main README](../README.md)
