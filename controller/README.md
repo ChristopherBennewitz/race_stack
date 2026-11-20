@@ -240,7 +240,7 @@ The controller manager's `AC4MPC` mode (`mode:=AC4MPC`) is the `MPC` mode with t
 (`progress_mpc.Ac4Mpc`, see its README) in place of the plain one: the same state handling, latency compensation, recovery, diagnostics and
 markers, a different solver. It needs `progress_mpc` built with libtorch and `generated_ac4mpc/`.
 
-- `ac4mpc_policy` (required): the TorchScript policy, written from a PPO checkpoint by the sim repo's `scripts/export_policy.py`. The
+- `ac4mpc_policy` (required): the TorchScript policy, written from a PPO checkpoint by the sim repo's `scripts/export_policy.py` (`python -m ppo.export_policy`). The
   checkpoint must have been trained for the car and the 40 Hz control rate the MPC was exported for.
 - `ac4mpc_mode` (`full`): `critic`, `actor` or `full`. `ac4mpc_value_weight` (0.2): the critic's weight in the QP (the paper's beta).
   `ac4mpc_reinit_period` (5): steps between re-seeding the parallel solver with the actor's rollout. `ac4mpc_eval_correction` (0.0) and

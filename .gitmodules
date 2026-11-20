@@ -18,3 +18,6 @@
 	path = sensors/vesc
 	url = git@github.com:ChristopherBennewitz/vesc.git
 	branch = ros2-humble
+[submodule "progress_mpc"]
+	path = progress_mpc
+	url = /home/chris/dev/race-stack-own/mpc_core
